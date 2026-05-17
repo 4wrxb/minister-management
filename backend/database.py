@@ -179,6 +179,36 @@ def init_db(app):
                         pass  # Skip duplicates
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_time_prefs_player ON time_preferences(player_id)')
 
+        # One-time migration: pre-existing installs ran on the legacy -10
+        # offset. If the setting hasn't been set yet but the DB already has
+        # player data, preserve the old behavior by defaulting to -10.
+        cursor.execute("SELECT 1 FROM settings WHERE key = 'time_slot_offset'")
+        offset_row = cursor.fetchone()
+        if offset_row is None:
+            cursor.execute('SELECT COUNT(*) AS n FROM players')
+            has_players = cursor.fetchone()['n'] > 0
+            if has_players:
+                cursor.execute(
+                    "INSERT INTO settings (key, value) VALUES ('time_slot_offset', '-10')"
+                )
+
+        # One-time migration: rename stored slot IDs to the new convention.
+        # Old: pre-day = '23:50', end-of-day = '23:50+'.
+        # New: pre-day = '23:50-1', end-of-day = '23:50'.
+        # Marker row tracks completion so we never re-run this.
+        cursor.execute("SELECT 1 FROM settings WHERE key = 'slot_id_format_v2'")
+        if cursor.fetchone() is None:
+            # Two-step rename to avoid collisions.
+            cursor.execute(
+                "UPDATE assignments SET time_slot = '23:50-1' WHERE time_slot = '23:50'"
+            )
+            cursor.execute(
+                "UPDATE assignments SET time_slot = '23:50' WHERE time_slot = '23:50+'"
+            )
+            cursor.execute(
+                "INSERT INTO settings (key, value) VALUES ('slot_id_format_v2', '1')"
+            )
+
         db.commit()
 
 
@@ -210,6 +240,20 @@ def get_research_day():
 def get_show_fire_crystals():
     """Get whether fire crystal fields should be shown."""
     return get_setting('show_fire_crystals', 'false') == 'true'
+
+
+def get_time_slot_offset():
+    """Get the time slot offset in minutes from the half-hour boundary.
+
+    Allowed: -20, -15, -10, 0. The legacy -10 offset is preserved for
+    existing installs (see init_db migration); fresh installs default to 0.
+    """
+    raw = get_setting('time_slot_offset', '0')
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    return v if v in (-20, -15, -10, 0) else 0
 
 
 def calculate_points(player, day):

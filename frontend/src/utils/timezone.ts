@@ -38,10 +38,11 @@ export function saveTimezone(tz: string): void {
 
 /**
  * Convert a UTC time string (HH:MM) to the given IANA timezone.
- * Handles slot IDs like "23:50+" by stripping the suffix.
+ * Tolerates slot IDs decorated with "+", "-1", or similar day-shift
+ * suffixes by stripping them before parsing.
  */
 export function formatTimeInTimezone(utcHHMM: string, timezone: string): string {
-  const clean = utcHHMM.replace('+', '');
+  const clean = utcHHMM.replace(/(\+|-1)$/, '');
   if (timezone === 'UTC') return clean;
   const [h, m] = clean.split(':').map(Number);
   // Use July 15 to be in summer (DST-aware for northern hemisphere)
@@ -55,25 +56,22 @@ export function formatTimeInTimezone(utcHHMM: string, timezone: string): string 
 }
 
 /**
- * Generate the 49 assignment time slots (23:50 through 23:50+).
- * These are 30-minute slots starting at 23:50 UTC (previous day)
- * through 23:50 UTC (end of day), covering ~24.5 hours.
+ * Generate the assignment time slots for the configured offset (minutes
+ * from each half-hour boundary). Offset 0 yields 48 cleanly-aligned slots;
+ * any other offset yields 49 — the previous day's later slot still runs
+ * past midnight and is included as a "23:MM-1" pre-day entry.
  */
-export function generateAssignmentSlots(): string[] {
-  const slots: string[] = ['23:50'];
-  let hour = 0;
-  let minute = 20;
-  while (true) {
-    const slot = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-    if (slot === '23:50') {
-      slots.push('23:50+'); // End-of-day 23:50 slot (distinct from the pre-midnight one)
-      break;
-    }
-    slots.push(slot);
-    minute += 30;
-    if (minute >= 60) {
-      minute -= 60;
-      hour += 1;
+export function generateAssignmentSlots(offsetMin: number = 0): string[] {
+  const base = ((offsetMin % 30) + 30) % 30;
+  const minutes = [base, base + 30];
+  const slots: string[] = [];
+  if (offsetMin !== 0) {
+    const preMin = Math.max(...minutes);
+    slots.push(`23:${preMin.toString().padStart(2, '0')}-1`);
+  }
+  for (let h = 0; h < 24; h++) {
+    for (const m of minutes) {
+      slots.push(`${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`);
     }
   }
   return slots;

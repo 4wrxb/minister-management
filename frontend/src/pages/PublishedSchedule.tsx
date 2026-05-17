@@ -26,6 +26,7 @@ export default function PublishedSchedule() {
   const [loading, setLoading] = useState(true);
   const [timezone, setTimezone] = useState(getSavedTimezone);
   const [appsStillOpen, setAppsStillOpen] = useState(false);
+  const [slotOffset, setSlotOffset] = useState<number>(0);
 
   useEffect(() => {
     if (!day) {
@@ -46,9 +47,13 @@ export default function PublishedSchedule() {
         }
       })
       .catch(() => {});
+
+    axios.get('/api/settings/time-slot-offset')
+      .then(res => setSlotOffset(res.data.time_slot_offset ?? 0))
+      .catch(() => {});
   }, [day]);
 
-  const allSlots = generateAssignmentSlots();
+  const allSlots = generateAssignmentSlots(slotOffset);
 
   if (loading) {
     return (
@@ -128,7 +133,7 @@ export default function PublishedSchedule() {
                 >
                   <div className="font-semibold text-accent mb-2 text-center">
                     {displayTime}
-                    {slot === '23:50+' && <span className="text-xs opacity-60 ml-1">(+1d)</span>}
+                    {slot.endsWith('-1') && <span className="text-xs opacity-60 ml-1">(-1d)</span>}
                     {timezone !== 'UTC' && (
                       <span className="block text-xs text-theme-dim font-normal">
                         {slot.replace('+', '')} UTC

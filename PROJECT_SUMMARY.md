@@ -164,7 +164,7 @@ Note: 1 day = 1440 minutes
 ### Auto-Assignment
 1. Calculate points for all players for the selected day
 2. Sort players by points (descending — highest priority first)
-3. Generate 30-minute time slots (00:00 through 23:30)
+3. Generate 30-minute time slots at the admin-configured offset (`-20`, `-15`, `-10`, or `0` min from each half-hour). Offset `0` gives 48 aligned slots; non-zero gives 49 (one pre-day slot, suffixed `-1`, runs past midnight).
 4. Match each player's hourly time preferences to 30-minute slots
 5. Assign highest-point players first to their preferred slots
 6. Track unassigned players (no matching open slots)

@@ -12,6 +12,7 @@ export default function AdminSettings() {
   const [saveMessage, setSaveMessage] = useState('');
   const [researchDay, setResearchDay] = useState<'tuesday' | 'friday'>('tuesday');
   const [showFireCrystals, setShowFireCrystals] = useState(false);
+  const [slotOffset, setSlotOffset] = useState<number>(0);
 
   const token = localStorage.getItem('adminToken') || '';
 
@@ -27,6 +28,10 @@ export default function AdminSettings() {
 
     axios.get('/api/settings/show-fire-crystals')
       .then(res => setShowFireCrystals(res.data.show_fire_crystals || false))
+      .catch(() => {});
+
+    axios.get('/api/settings/time-slot-offset')
+      .then(res => setSlotOffset(res.data.time_slot_offset ?? 0))
       .catch(() => {});
 
     axios.get('/api/settings/application-closing-time')
@@ -117,6 +122,19 @@ export default function AdminSettings() {
         { headers: { Authorization: token } }
       );
       setShowFireCrystals(newValue);
+      showSaveMessage();
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleSelectSlotOffset = async (value: number) => {
+    try {
+      await axios.put('/api/admin/settings/time-slot-offset',
+        { time_slot_offset: value },
+        { headers: { Authorization: token } }
+      );
+      setSlotOffset(value);
       showSaveMessage();
     } catch {
       // ignore
@@ -229,6 +247,31 @@ export default function AdminSettings() {
             {showFireCrystals ? t('admin.enabled') : t('admin.disabled')}
           </span>
         </label>
+      </div>
+
+      {/* Time Slot Offset */}
+      <div className="bg-dark-card rounded-xl border border-theme-border p-6">
+        <h3 className="text-xl font-bold text-accent mb-2">{t('admin.slotOffset')}</h3>
+        <p className="text-theme-dim text-sm mb-4">{t('admin.slotOffsetDesc')}</p>
+        <div className="flex gap-2">
+          {[-20, -15, -10, 0].map((v) => {
+            const selected = slotOffset === v;
+            const label = v > 0 ? `+${v}` : `${v}`;
+            return (
+              <button
+                key={v}
+                onClick={() => handleSelectSlotOffset(v)}
+                className={`px-4 py-2 rounded-lg border font-medium transition-colors ${
+                  selected
+                    ? 'bg-accent text-dark-bg border-accent'
+                    : 'bg-dark-bg text-theme-text border-theme-border hover:border-accent'
+                }`}
+              >
+                {label} {t('admin.minutes')}
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

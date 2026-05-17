@@ -18,7 +18,7 @@ from database import (
     init_db, get_all_players, get_player_by_fid,
     save_player, delete_player, calculate_points, get_db,
     get_research_day, get_show_fire_crystals, set_setting, get_setting,
-    get_time_preference_counts
+    get_time_preference_counts, get_time_slot_offset
 )
 import json
 
@@ -45,6 +45,47 @@ WOS_API_SECRET = os.getenv('WOS_API_SECRET', 'tB87#kPtkxqOS2')
 
 # Valid auth tokens
 VALID_TOKENS = {'admin-token', 'minister-token'}
+
+
+def generate_time_slots(offset_min):
+    """Generate the 30-min time slot IDs for the configured offset.
+
+    Offset 0 yields 48 cleanly-aligned slots. Any other offset yields 49:
+    the previous day's later slot still runs past midnight, so it appears
+    as a "23:MM-1" pre-day entry alongside the natural end-of-day "23:MM".
+    """
+    base = offset_min % 30  # -20→10, -15→15, -10→20, 0→0
+    minutes = [base, base + 30]
+    slots = []
+    if offset_min != 0:
+        pre_min = max(minutes)
+        slots.append(f"23:{pre_min:02d}-1")
+    for h in range(24):
+        for m in minutes:
+            slots.append(f"{h:02d}:{m:02d}")
+    return slots
+
+
+def matching_slots_for_hour(h, offset_min):
+    """Slots whose 30-min window overlaps hour H by at least 10 minutes."""
+    base = offset_min % 30
+    minutes_list = [base, base + 30]
+    pre_min = max(minutes_list)
+    result = []
+    for delta_h in (-1, 0, 1):
+        for m in minutes_list:
+            start_offset = delta_h * 60 + m
+            end_offset = start_offset + 30
+            overlap = max(0, min(end_offset, 60) - max(start_offset, 0))
+            if overlap < 10:
+                continue
+            hh = (h + delta_h) % 24
+            slot = f"{hh:02d}:{m:02d}"
+            # Pre-day disambiguation matches generate_time_slots().
+            if offset_min != 0 and delta_h == -1 and hh == 23 and m == pre_min:
+                slot = f"23:{m:02d}-1"
+            result.append(slot)
+    return result
 
 
 def check_admin_auth():
@@ -271,6 +312,34 @@ def set_fire_crystals_setting():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/settings/time-slot-offset', methods=['GET'])
+def get_time_slot_offset_setting():
+    """Get the configured slot offset (-10, 0, or +10 minutes)."""
+    return jsonify({'time_slot_offset': get_time_slot_offset()}), 200
+
+
+@app.route('/api/admin/settings/time-slot-offset', methods=['PUT'])
+def set_time_slot_offset_setting():
+    """Set the slot offset. Accepts -10, 0, or 10."""
+    try:
+        auth_error = check_admin_auth()
+        if auth_error:
+            return auth_error
+
+        data = request.json or {}
+        try:
+            value = int(data.get('time_slot_offset'))
+        except (TypeError, ValueError):
+            return jsonify({'error': 'time_slot_offset must be an integer'}), 400
+        if value not in (-20, -15, -10, 0):
+            return jsonify({'error': 'time_slot_offset must be -20, -15, -10, or 0'}), 400
+
+        set_setting('time_slot_offset', str(value))
+        return jsonify({'success': True, 'time_slot_offset': value}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/admin/settings/application-closing-time', methods=['PUT'])
 def set_closing_time_setting():
     """Set or clear application closing time."""
@@ -436,21 +505,9 @@ def auto_assign():
         # Sort by points (descending)
         players.sort(key=lambda p: p['points'], reverse=True)
 
-        # Generate 30-minute time slots starting at 23:50 (previous day)
-        # through 23:50+ (end of day), covering ~24.5 hours.
-        # Slots: 23:50, 00:20, 00:50, 01:20, ..., 23:20, 23:50+
-        time_slots = ['23:50']
-        hour, minute = 0, 20
-        while True:
-            slot = f"{hour:02d}:{minute:02d}"
-            if slot == '23:50':
-                time_slots.append('23:50+')
-                break
-            time_slots.append(slot)
-            minute += 30
-            if minute >= 60:
-                minute -= 60
-                hour += 1
+        # Generate 30-minute time slots based on the configured offset.
+        offset_min = get_time_slot_offset()
+        time_slots = generate_time_slots(offset_min)
 
         # Fetch sticky assignments BEFORE clearing
         db = get_db()
@@ -503,29 +560,13 @@ def auto_assign():
             time_slots_by_day = player.get('time_slots_by_day', {})
             player_time_prefs = set(time_slots_by_day.get(day_type, player.get('time_slots', [])))
 
-            # Find matching 30-min slots for player's hourly preferences
-            # With ±20 min tolerance, each hour H maps to 3 slots:
-            #   (H-1):50  — starts 10 min before the hour (within 20 min)
-            #   H:20      — starts 20 min after the hour (within 20 min)
-            #   H:50      — within the selected hour
+            # Resolve player's hour preferences to concrete 30-min slots
+            # using the configured offset.
             matching_slots = []
             for pref in player_time_prefs:
                 if ':' in pref:
                     h = int(pref.split(':')[0])
-                    prev_h = (h - 1) % 24
-                    # Previous hour's :50 slot
-                    if h == 0:
-                        matching_slots.append('23:50')  # The pre-midnight slot
-                    else:
-                        matching_slots.append(f"{prev_h:02d}:50")
-                    # Current hour's :20 and :50 slots
-                    matching_slots.append(f"{h:02d}:20")
-                    # For hour 23, the :50 slot is "23:50+" (end of day),
-                    # NOT "23:50" which is the pre-midnight slot (previous day)
-                    if h == 23:
-                        matching_slots.append('23:50+')
-                    else:
-                        matching_slots.append(f"{h:02d}:50")
+                    matching_slots.extend(matching_slots_for_hour(h, offset_min))
 
             assigned = False
             for slot in matching_slots:
@@ -728,7 +769,7 @@ def export_assignments():
                 assigned_player_ids.add(player['id'])
                 points = calculate_points(player, day_key)
                 ws.append([
-                    '23:50 (+1d)' if row['time_slot'] == '23:50+' else row['time_slot'],
+                    f"{row['time_slot'][:-2]} (-1d)" if row['time_slot'].endswith('-1') else row['time_slot'],
                     player['fid'],
                     player.get('alliance', ''),
                     player['game_name'],

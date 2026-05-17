@@ -175,7 +175,7 @@ function DroppableSlot({ slotId, displayTime, children, isOver, hasPlayer }: {
     >
       <div className="font-semibold text-theme-dim mb-2">
         {displayTime}
-        {slotId === '23:50+' && <span className="text-xs opacity-60 ml-1">(+1d)</span>}
+        {slotId.endsWith('-1') && <span className="text-xs opacity-60 ml-1">(-1d)</span>}
       </div>
       {children}
     </div>
@@ -212,6 +212,7 @@ export default function AssignmentManagement() {
   const [researchDay, setResearchDay] = useState<'tuesday' | 'friday'>('tuesday');
   const [timezone, setTimezone] = useState(getSavedTimezone);
   const [publishedDays, setPublishedDays] = useState<string[]>([]);
+  const [slotOffset, setSlotOffset] = useState<number>(0);
 
   const DAY_TABS = [
     { key: 'monday', label: 'Monday - Construction' },
@@ -223,11 +224,14 @@ export default function AssignmentManagement() {
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
 
-  const timeSlots = generateTimeSlots();
+  const timeSlots = generateTimeSlots(slotOffset);
 
   useEffect(() => {
     fetchResearchDay();
     fetchPublishedDays();
+    axios.get('/api/settings/time-slot-offset')
+      .then(res => setSlotOffset(res.data.time_slot_offset ?? 0))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {

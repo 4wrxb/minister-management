@@ -244,7 +244,7 @@ export default function UpdateSubmission() {
                               {slots.map((s, i) => (
                                 <span key={i} className="px-3 py-1 bg-success/20 text-success rounded-full text-sm font-medium">
                                   {formatTimeInTimezone(s.time_slot, timezone)}
-                                  {s.time_slot === '23:50+' && <span className="text-xs opacity-60 ml-1">(+1d)</span>}
+                                  {s.time_slot.endsWith('-1') && <span className="text-xs opacity-60 ml-1">(-1d)</span>}
                                   {timezone !== 'UTC' && (
                                     <span className="opacity-60 ml-1 text-xs">({s.time_slot} UTC)</span>
                                   )}

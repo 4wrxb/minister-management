@@ -92,8 +92,8 @@ Located in: `backend/app.py` → `/api/admin/assignments/auto-assign`
 
 1. Calculates points for all players for the selected day
 2. Sorts players by points (descending)
-3. Generates 30-minute time slots (00:00, 00:30, 01:00, etc.)
-4. Matches player hourly preferences to 30-min slots
+3. Reads the configured slot offset (`-20`, `-15`, `-10`, or `0`) and generates the matching 30-minute slots. Offset `0` → 48 aligned slots (`00:00, 00:30, …`); any other offset → 49 slots, including a `23:MM-1` pre-day entry that runs past midnight.
+4. Matches each player hourly preference to every slot whose window overlaps that hour by ≥ 10 minutes
 5. Assigns highest-point players first to their preferred slots
 6. Tracks unassigned players
 
@@ -125,8 +125,9 @@ Located in: `backend/app.py` → `/api/admin/assignments/auto-assign`
 
 ### 2. Time Slot Granularity
 - Players select preferences in 1-hour increments (00:00 to 23:00)
-- System assigns in 30-minute increments (00:00, 00:30, etc.)
-- Each hourly preference covers two 30-minute slots
+- System assigns in 30-minute increments at an admin-configurable offset (`-20`, `-15`, `-10`, or `0`) from each half-hour boundary
+- Each hourly preference covers 2 slots (offset `0`) or 3 slots (any non-zero offset)
+- Pre-day slot IDs carry a `-1` suffix (e.g. `23:50-1`); end-of-day slot IDs remain plain (`23:50`)
 
 ### 3. Multi-Language Support
 - 5 languages: English, Korean, Chinese, Turkish, Arabic
@@ -218,9 +219,10 @@ docker compose up --build
 4. Add translations to `frontend/src/i18n.ts`
 
 ### Changing Time Slot Granularity
-1. Frontend input: `PlayerForm.tsx` → `timeSlots` array
-2. Backend assignment: `app.py` → `/api/admin/assignments/auto-assign`
-3. Admin display: `AssignmentManagement.tsx` → `generateTimeSlots()`
+1. Admins pick the offset from the Settings tab (`AdminSettings.tsx`); valid values: `-20`, `-15`, `-10`, `0`
+2. Backend slot generation + matching: `app.py` → `generate_time_slots()` / `matching_slots_for_hour()`
+3. Frontend shared slot generator: `frontend/src/utils/timezone.ts` → `generateAssignmentSlots(offset)`
+4. To change the set of allowed offsets, update validation in `database.py` (`get_time_slot_offset`) and the PUT endpoint in `app.py`
 
 ## Testing Guidelines
 

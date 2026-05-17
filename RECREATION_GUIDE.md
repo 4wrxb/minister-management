@@ -31,8 +31,8 @@ This document contains everything needed to recreate the Ministry Management Sys
 **Key Design Decisions:**
 - Player FID (game ID) is **required** — used as the unique identifier for updates
 - Time preferences are stored **per day type** (construction, research, troop) — not globally
-- Players select hourly preferences (00:00–23:00); system assigns in 30-minute slots with ±20 min tolerance
-- 49 assignment slots: `23:50, 00:20, 00:50, 01:20, ... 23:20, 23:50+` (the `23:50+` is the end-of-day slot, distinct from the pre-midnight `23:50`)
+- Players select hourly preferences (00:00–23:00); system assigns in 30-minute slots
+- Assignment slot offset is an admin setting (`-20`, `-15`, `-10`, or `0` minutes from each half-hour). Offset `0` yields 48 aligned slots (`00:00, 00:30, …, 23:30`); any other offset yields 49 because one slot straddles midnight and appears as a pre-day `23:MM-1` entry alongside the natural end-of-day `23:MM`. Existing installs that ran on the legacy `-10` slots are migrated automatically (see `database.py` init).
 - Simple password auth (not production-grade) — same permissions for admin and minister passwords
 - SQLite with `journal_mode=DELETE` (required for GCS FUSE compatibility)
 - Single gunicorn worker (required for SQLite on GCS FUSE)
@@ -887,21 +887,12 @@ def auto_assign():
         # Sort by points (descending)
         players.sort(key=lambda p: p['points'], reverse=True)
 
-        # Generate 30-minute time slots starting at 23:50 (previous day)
-        # through 23:50+ (end of day), covering ~24.5 hours.
-        # Slots: 23:50, 00:20, 00:50, 01:20, ..., 23:20, 23:50+
-        time_slots = ['23:50']
-        hour, minute = 0, 20
-        while True:
-            slot = f"{hour:02d}:{minute:02d}"
-            if slot == '23:50':
-                time_slots.append('23:50+')
-                break
-            time_slots.append(slot)
-            minute += 30
-            if minute >= 60:
-                minute -= 60
-                hour += 1
+        # Read configured offset (-20, -15, -10, or 0) and build slots.
+        # See module-level generate_time_slots() / matching_slots_for_hour():
+        # offset 0 → 48 aligned slots; non-zero → 49 with a "23:MM-1" pre-day
+        # entry alongside the natural end-of-day "23:MM".
+        offset_min = get_time_slot_offset()
+        time_slots = generate_time_slots(offset_min)
 
         # Assignment logic
         assignments = {slot: [] for slot in time_slots}
@@ -912,29 +903,13 @@ def auto_assign():
             time_slots_by_day = player.get('time_slots_by_day', {})
             player_time_prefs = set(time_slots_by_day.get(day_type, player.get('time_slots', [])))
 
-            # Find matching 30-min slots for player's hourly preferences
-            # With ±20 min tolerance, each hour H maps to 3 slots:
-            #   (H-1):50  — starts 10 min before the hour (within 20 min)
-            #   H:20      — starts 20 min after the hour (within 20 min)
-            #   H:50      — within the selected hour
+            # Map each hourly preference to every 30-min slot whose window
+            # overlaps hour H by at least 10 minutes.
             matching_slots = []
             for pref in player_time_prefs:
                 if ':' in pref:
                     h = int(pref.split(':')[0])
-                    prev_h = (h - 1) % 24
-                    # Previous hour's :50 slot
-                    if h == 0:
-                        matching_slots.append('23:50')  # The pre-midnight slot
-                    else:
-                        matching_slots.append(f"{prev_h:02d}:50")
-                    # Current hour's :20 and :50 slots
-                    matching_slots.append(f"{h:02d}:20")
-                    # For hour 23, the :50 slot is "23:50+" (end of day),
-                    # NOT "23:50" which is the pre-midnight slot (previous day)
-                    if h == 23:
-                        matching_slots.append('23:50+')
-                    else:
-                        matching_slots.append(f"{h:02d}:50")
+                    matching_slots.extend(matching_slots_for_hour(h, offset_min))
 
             assigned = False
             for slot in matching_slots:
@@ -1128,7 +1103,7 @@ def export_assignments():
                 assigned_player_ids.add(player['id'])
                 points = calculate_points(player, day_key)
                 ws.append([
-                    '23:50 (+1d)' if row['time_slot'] == '23:50+' else row['time_slot'],
+                    f"{row['time_slot'][:-2]} (-1d)" if row['time_slot'].endswith('-1') else row['time_slot'],
                     player['fid'],
                     player.get('alliance', ''),
                     player['game_name'],
@@ -1653,23 +1628,25 @@ points = troop_training_speedups_days (raw value, 1 point per day)
 
 1. Calculate points for all players for the selected day
 2. Sort players by points descending (highest first)
-3. Generate 49 time slots: `23:50, 00:20, 00:50, 01:20, ... 23:20, 23:50+`
+3. Read the configured slot offset (`-20`, `-15`, `-10`, or `0`) and generate the 30-min slot list. Examples:
+   - Offset `0`: 48 slots — `00:00, 00:30, …, 23:30`
+   - Offset `-10`: 49 slots — `23:50-1, 00:20, 00:50, …, 23:20, 23:50`
+   - Offset `-15`: 49 slots — `23:45-1, 00:15, 00:45, …, 23:15, 23:45`
+   - Offset `-20`: 49 slots — `23:40-1, 00:10, 00:40, …, 23:10, 23:40`
 4. For each player (highest points first):
    - Get their hourly time preferences for this day type
-   - Map each hourly preference to 3 matching 30-min slots (±20 min tolerance):
-     - `(H-1):50` — 10 minutes before the hour
-     - `H:20` — 20 minutes after the hour
-     - `H:50` — 50 minutes after the hour (or `23:50+` for hour 23)
+   - Map each preference H to every 30-min slot whose window overlaps hour H by ≥ 10 minutes (typically 2 slots at offset 0, 3 slots at any non-zero offset)
    - Assign to the first empty matching slot
    - If no empty slot found, add to unassigned list
 5. Save assignments to database
 
-### The 23:50 / 23:50+ Distinction
+### Slot ID Convention
 
-- `23:50` = the **pre-midnight slot** (day starts here, before 00:00)
-- `23:50+` = the **end-of-day slot** (last slot, after 23:20)
-- In Excel export, `23:50+` displays as `23:50 (+1d)` for clarity
-- When hour 23 is selected as a preference, the `:50` slot maps to `23:50+` (NOT `23:50`)
+- Plain `HH:MM` IDs (e.g. `12:30`, `23:50`) refer to slots starting in the current day.
+- A `-1` suffix (e.g. `23:50-1`) marks the **pre-day** slot — the previous day's last slot still running past midnight into today. Only appears when offset ≠ 0.
+- Excel export renders the pre-day slot as `23:MM (-1d)`.
+- `formatTimeInTimezone()` strips the suffix before timezone conversion.
+- The UI shows a small `(-1d)` badge next to pre-day slots in admin assignment, published schedule, and update-submission views.
 
 ### Application Closing Time
 
@@ -1704,6 +1681,7 @@ points = troop_training_speedups_days (raw value, 1 point per day)
 | `POST` | `/api/player/wos-lookup` | Lookup player from WOS game API |
 | `GET` | `/api/settings/research-day` | Get current research day |
 | `GET` | `/api/settings/show-fire-crystals` | Get fire crystal visibility |
+| `GET` | `/api/settings/time-slot-offset` | Get slot offset (-20, -15, -10, or 0) |
 | `GET` | `/api/settings/published-days` | Get array of published days |
 | `GET` | `/api/settings/application-closing-time` | Returns `{closing_time, is_closed}` |
 | `GET` | `/api/settings/state-number` | Returns `{state_number}`, default '2694' |
@@ -1726,6 +1704,7 @@ points = troop_training_speedups_days (raw value, 1 point per day)
 | `GET` | `/api/admin/export` | Export Excel workbook |
 | `PUT` | `/api/admin/settings/research-day` | Set Tuesday/Friday |
 | `PUT` | `/api/admin/settings/show-fire-crystals` | Toggle fire crystal fields |
+| `PUT` | `/api/admin/settings/time-slot-offset` | Set slot offset (-20, -15, -10, or 0) |
 | `PUT` | `/api/admin/settings/application-closing-time` | Set/clear application deadline |
 | `PUT` | `/api/admin/settings/state-number` | Set state number |
 | `PUT` | `/api/admin/settings/publish` | Publish a day's schedule |
@@ -1773,7 +1752,7 @@ points = troop_training_speedups_days (raw value, 1 point per day)
 | id | INTEGER PK | Auto-increment |
 | player_id | INTEGER FK | References players(id) |
 | day | TEXT | 'monday', 'tuesday', 'friday', 'thursday' |
-| time_slot | TEXT | e.g., "14:20", "23:50+" |
+| time_slot | TEXT | e.g., "14:20"; pre-day slot uses "-1" suffix (e.g. "23:50-1") when offset ≠ 0 |
 | position | INTEGER | Default 0 |
 | is_assigned | BOOLEAN | Default 1 |
 | created_at | TIMESTAMP | Auto |
