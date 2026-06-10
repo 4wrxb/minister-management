@@ -153,6 +153,95 @@ jobs:
         working-directory: tests/e2e
         run: npx playwright test
 
+      # ── Prefixed restart (URL_PREFIX=/ministry) ──────────────────────────────
+      #
+      # Same image, different env: proves the build-once / deploy-anywhere
+      # promise of the runtime <base href> + URL_PREFIX dispatcher pair.
+
+      - name: Restart container with URL_PREFIX=/ministry (fresh DB)
+        run: |
+          # Tear down the previous container and wipe the bind-mounted DB so
+          # the prefixed Playwright run starts from an empty player set
+          # (otherwise admin-flow.spec.ts hits strict-mode locator violations
+          # against players left over from the default-config run). The DB
+          # file is owned by root inside the container, so sudo is required
+          # on the bind-mounted host directory.
+          docker compose down
+          sudo rm -rf data
+          docker compose -f docker-compose.yml -f docker-compose.prefix.yml \
+            up -d --no-build --force-recreate
+          echo "Container restarted with URL_PREFIX=/ministry"
+
+      - name: Wait for prefixed health endpoint
+        run: |
+          MAX_WAIT=60
+          INTERVAL=3
+          ELAPSED=0
+          until curl -sf "$BASE_URL/ministry/health" > /dev/null 2>&1; do
+            if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
+              echo "ERROR: Prefixed backend did not become healthy within ${MAX_WAIT}s"
+              docker compose logs
+              exit 1
+            fi
+            echo "Waiting for prefixed backend... (${ELAPSED}s elapsed)"
+            sleep "$INTERVAL"
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+          echo "Prefixed backend is healthy after ${ELAPSED}s"
+
+      - name: Prefixed routing assertions
+        run: |
+          # /ministry/api/* mounts the API
+          STATUS=$(curl -o /dev/null -sw "%{http_code}" "$BASE_URL/ministry/api/settings/research-day")
+          [ "$STATUS" = "200" ] || { echo "FAIL: /ministry/api/settings/research-day returned $STATUS"; exit 1; }
+
+          # /health stays reachable at the root (proxy block)
+          STATUS=$(curl -o /dev/null -sw "%{http_code}" "$BASE_URL/health")
+          [ "$STATUS" = "200" ] || { echo "FAIL: root /health returned $STATUS"; exit 1; }
+
+          # /api/* at the root should 404 (it's mounted under /ministry only)
+          STATUS=$(curl -o /dev/null -sw "%{http_code}" "$BASE_URL/api/settings/research-day")
+          [ "$STATUS" = "404" ] || { echo "FAIL: root /api/* should 404 when prefixed; got $STATUS"; exit 1; }
+          echo "PASS: prefixed routing"
+
+      - name: Served HTML contains <base href> and <meta app-base>
+        run: |
+          BODY=$(curl -sf "$BASE_URL/ministry/")
+          echo "$BODY" | grep -q '<base href="/ministry/">' || \
+            { echo "FAIL: served HTML missing <base href=\"/ministry/\">"; echo "$BODY"; exit 1; }
+          echo "$BODY" | grep -q '<meta name="app-base" content="/ministry">' || \
+            { echo "FAIL: served HTML missing <meta name=\"app-base\" content=\"/ministry\">"; echo "$BODY"; exit 1; }
+          echo "PASS: <base> + <meta> tags injected under prefix"
+
+      - name: Relative asset references resolve under the prefix
+        run: |
+          BODY=$(curl -sf "$BASE_URL/ministry/")
+          # Vite emits relative refs like <script ... src="./assets/index-XXXX.js">
+          ASSET=$(echo "$BODY" | grep -oE 'src="\./assets/[^"]+\.js"' | head -n 1 | sed 's/src="\.\///; s/"$//')
+          if [ -z "$ASSET" ]; then
+            echo "FAIL: could not find a relative ./assets/...js reference in index.html"
+            echo "$BODY"
+            exit 1
+          fi
+          ASSET_URL="$BASE_URL/ministry/$ASSET"
+          STATUS=$(curl -o /dev/null -sw "%{http_code}" "$ASSET_URL")
+          [ "$STATUS" = "200" ] || { echo "FAIL: prefixed asset $ASSET_URL returned $STATUS"; exit 1; }
+          echo "PASS: $ASSET resolves at $ASSET_URL"
+
+      - name: SPA deep links under prefix
+        run: |
+          for ROUTE in /ministry/ /ministry/admin /ministry/submit /ministry/update; do
+            STATUS=$(curl -o /dev/null -sw "%{http_code}" "$BASE_URL$ROUTE")
+            [ "$STATUS" = "200" ] || { echo "FAIL: $ROUTE returned $STATUS"; exit 1; }
+          done
+          echo "PASS: prefixed SPA deep links all return 200"
+
+      - name: Re-run Playwright admin-flow under prefix
+        working-directory: tests/e2e
+        env:
+          BASE_URL: http://localhost:8080/ministry
+        run: npx playwright test tests/admin-flow.spec.ts
+
       # ── Final log snapshot ───────────────────────────────────────────────────
 
       - name: Final container log check (no new errors)

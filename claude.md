@@ -26,7 +26,7 @@ A web application that automates State vs State (SVS) ministry-position scheduli
 **Deployment:**
 - Docker + Docker Compose for local development
 - Multi-stage Docker build (Node build → Python runtime serving built assets from `backend/static/`)
-- Production target is cloud-agnostic; common targets include Google Cloud Run (with GCS FUSE), AWS ECS/Fargate (with EFS), and Azure Container Apps. See `DEPLOYMENT.md`.
+- Production target is cloud-agnostic; common targets include Google Cloud Run (with GCS FUSE), Azure App Service (multi-container with a Cloudflare Tunnel sidecar, Azure Files for SMB persistence), AWS ECS/Fargate (with EFS), and Azure Container Apps. See `DEPLOYMENT.md`.
 
 ## Project Structure
 
@@ -199,6 +199,8 @@ Located in `backend/app.py` → `POST /api/admin/assignments/auto-assign`.
 | `DATABASE_PATH` | Path to the SQLite file | `/data/minister.db` |
 | `WOS_API_SECRET` | MD5 signing secret for WOS API calls | (hardcoded fallback — override in production) |
 | `PORT` | HTTP listen port | `8080` |
+| `URL_PREFIX` | Mount the Flask app under a sub-path (e.g. `/ministry`) when behind a path-based reverse proxy. `/health` stays at the root for platform health probes. Wired via `DispatcherMiddleware` at the bottom of `backend/app.py`. The frontend bundle is prefix-agnostic — `backend/app.py` injects a `<base href="${URL_PREFIX}/">` and `<meta name="app-base">` tag into `index.html` at request time (cached per prefix), so the same Docker image works at any prefix without a rebuild. | _(empty — serve at root)_ |
+| `SQLITE_VFS` | SQLite VFS override threaded into `sqlite3.connect` in `backend/database.py`. Set to `unix-dotfile` when `DATABASE_PATH` lives on SMB/CIFS (e.g. Azure Files) so SQLite uses on-disk lock files instead of POSIX `fcntl` byte-range locks. Leave unset on local disks and GCS FUSE. | _(unset)_ |
 
 ## Running Locally
 
@@ -350,7 +352,7 @@ npm run dev                   # http://localhost:5173
 - Verify mobile responsiveness for any UI change.
 
 ### Deployment
-See `DEPLOYMENT.md` for bare metal, Docker, Cloud Run, AWS, Azure, and PaaS options.
+See `DEPLOYMENT.md` for bare metal, Docker, Cloud Run, Azure App Service (+ Cloudflare Tunnel sidecar), AWS, and PaaS options, plus a platform-agnostic Cloudflare integration guide.
 
 ## Deployment Lessons Learned
 
@@ -365,6 +367,20 @@ The Dockerfile uses `--workers 1 --threads 2`. Multiple workers cause concurrent
 
 ### Cloud Run gen2 Required for GCS FUSE
 Volume mounts require `--execution-environment gen2`. Gen1 won't work.
+
+### Azure Files (SMB) Requires `SQLITE_VFS=unix-dotfile`
+SMB/CIFS does not honour POSIX `fcntl` byte-range locks reliably. Without the override, the default SQLite VFS races on the lock bytes and produces `OperationalError: database is locked` and corrupted writes. Setting `SQLITE_VFS=unix-dotfile` (read by `get_db()` in `database.py`) makes SQLite use on-disk lock files instead. Pair this with `journal_mode=DELETE` (already set) on any network filesystem.
+
+### Sub-path Hosting Uses Runtime `<base href>` Injection
+When the app is hosted at e.g. `https://example.com/ministry/`, set `URL_PREFIX=/ministry` on the container. That's it — the same Docker image works at any prefix without a rebuild. Mechanism:
+
+- The Vite bundle is built with `base: './'`, so emitted asset URLs are relative (`./assets/index-abc123.js`).
+- `serve()` in `backend/app.py` reads `index.html` once, splices `<base href="/ministry/">` and `<meta name="app-base" content="/ministry">` into `<head>`, and caches the rewritten HTML per `request.script_root` (`_INDEX_HTML_CACHE`).
+- HTML5 resolves the relative `./assets/…` URLs against `<base href>`, so they become `/ministry/assets/…` regardless of which SPA route served `index.html`.
+- The frontend reads `<meta name="app-base">` via `getAppBase()` (`frontend/src/utils/appBase.ts`) and feeds the result to `<BrowserRouter basename>` (`App.tsx`) and `axios.defaults.baseURL` (`main.tsx`).
+- `DispatcherMiddleware` (bottom of `app.py`) mounts the Flask app under `URL_PREFIX` while keeping `/health` at the root so platform health probes don't need to be prefix-aware.
+
+If `URL_PREFIX` is empty, `<base href="/">` is injected and the app serves at the root unchanged.
 
 ## Troubleshooting
 

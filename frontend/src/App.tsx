@@ -9,6 +9,7 @@ import PublishedSchedule from './pages/PublishedSchedule';
 import PlayerGuide from './pages/PlayerGuide';
 import AdminGuide from './pages/AdminGuide';
 import LanguageSelector from './components/LanguageSelector';
+import { getAppBase } from './utils/appBase';
 
 function App() {
   const { i18n } = useTranslation();
@@ -17,7 +18,7 @@ function App() {
   document.documentElement.dir = i18n.language === 'ar' ? 'rtl' : 'ltr';
 
   return (
-    <Router>
+    <Router basename={getAppBase()}>
       <div className="min-h-screen flex flex-col">
         <header className="w-full py-3 px-4 flex justify-end">
           <LanguageSelector />

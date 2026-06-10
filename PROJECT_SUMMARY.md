@@ -242,7 +242,9 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for complete instructions covering:
 - Bare metal (gunicorn + nginx/Caddy)
 - Docker / Docker Compose
 - Google Cloud Run (with GCS FUSE)
-- AWS, Azure, DigitalOcean, and PaaS platforms
+- Azure App Service (multi-container with a Cloudflare Tunnel sidecar, Azure Files for SMB persistence — uses `SQLITE_VFS=unix-dotfile`)
+- AWS, DigitalOcean, and other PaaS platforms
+- Optional Cloudflare front (proxy or zero-trust tunnel) in front of any of the above
 
 ## Security
 

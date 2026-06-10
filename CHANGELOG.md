@@ -7,15 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Sub-path hosting via `URL_PREFIX`** with runtime `<base href>` injection. Set `URL_PREFIX=/ministry` on the backend to host the app at a sub-path behind a path-based reverse proxy (e.g. a Cloudflare Tunnel route). `/health` stays at the root so platform health probes don't need to be prefix-aware. Backend mount uses `werkzeug.middleware.dispatcher.DispatcherMiddleware`. The frontend bundle is built with `base: './'` (relative asset URLs); `backend/app.py` splices a `<base href="${URL_PREFIX}/">` and `<meta name="app-base">` tag into the served `index.html` (cached per `request.script_root`), so the same Docker image works at any prefix without a rebuild. A new `getAppBase()` helper (`frontend/src/utils/appBase.ts`) reads the meta tag and feeds the result to `<BrowserRouter basename>` and `axios.defaults.baseURL`.
+- **`SQLITE_VFS` env var** threaded into `sqlite3.connect` in `backend/database.py`. Set to `unix-dotfile` when `DATABASE_PATH` lives on SMB/CIFS (e.g. Azure Files) so SQLite uses on-disk lock files instead of POSIX `fcntl` byte-range locks.
+- **Test coverage** for the new env vars: backend pytest (`tests/backend/test_database_vfs.py`, `test_url_prefix.py`, `test_base_injection.py`), frontend vitest (`frontend/src/__tests__/appBase.test.ts`), and a prefixed-restart phase in the Docker integration job that exercises the same image with `URL_PREFIX=/ministry` (asserts the injected `<base>` tag, relative-asset resolution under the prefix, and the full Playwright admin flow against `http://localhost:8080/ministry`).
+- **Deployment guide rewrite** in `DEPLOYMENT.md`:
+  - Full **Azure App Service + Cloudflare Tunnel sidecar** walkthrough (multi-container compose, Azure Files SMB persistence, Cloudflare IP allowlist, sub-path `/ministry` worked example).
+  - New platform-agnostic **Putting Cloudflare in Front of Any Deployment** section covering both proxy and tunnel modes for Bare Metal / Cloud Run / App Service / AWS.
+- This `CHANGELOG.md`.
+
 ### Changed
 - Documentation aligned with the current codebase: `claude.md` rewritten end-to-end, `PROJECT_SUMMARY.md` schema and API tables completed, README project structure and tech stack tables refreshed.
 - Slot-model description corrected across all docs. The auto-assigner uses a fixed 49-slot, end-of-day-anchored cadence (`23:50, 00:20, 00:50, ..., 23:20, 23:50+`) with a ±20 minute tolerance window — not "00:00 through 23:30".
 - Default `admin123` / `minister123` passwords are now called out with explicit ⚠️ warnings in `README.md`, `DEPLOYMENT.md`, and `.env.example`.
 - Hardcoded personal domain replaced with a `<your-domain.example.com>` placeholder in `DEPLOYMENT.md`.
 - `.github/copilot-instructions.md` now requires future agents to update `claude.md`, `PROJECT_SUMMARY.md`, and `RECREATION_GUIDE.md` whenever API endpoints, DB columns, or env vars change.
-
-### Added
-- This `CHANGELOG.md`.
+- `claude.md`, `PROJECT_SUMMARY.md`, and `RECREATION_GUIDE.md` env-var sections, code snippets, and deployment lessons updated to cover `URL_PREFIX` / `SQLITE_VFS` and the Azure App Service deployment story.
+- Frontend vitest config widened to `*.test.{ts,tsx}` so pure-TypeScript test files are collected.
 
 ## [1.3.0] — 2026-03-18
 
