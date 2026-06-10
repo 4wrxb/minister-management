@@ -213,7 +213,7 @@ docker compose down -v          # Stop and remove volumes (data loss!)
 
 ## Option 3: Google Cloud Run
 
-This is the production deployment used at ministry.hunterisadonkey.com. It uses GCS FUSE to mount a Cloud Storage bucket for persistent SQLite storage.
+This is a production-grade deployment pattern (similar to what the reference deployment at `<your-domain.example.com>` uses — substitute your own custom domain). It uses GCS FUSE to mount a Cloud Storage bucket for persistent SQLite storage.
 
 ### Architecture
 
@@ -369,10 +369,12 @@ The app runs anywhere that supports Docker and persistent filesystem storage for
 |----------|-------------|---------|----------|
 | `FLASK_ENV` | `development` or `production` | `production` | No |
 | `SECRET_KEY` | Flask session secret key | `dev-secret-key` | Yes (production) |
-| `ADMIN_PASSWORD` | Admin login password | `admin123` | Yes |
-| `MINISTER_PASSWORD` | Minister login password | `minister123` | Yes |
+| `ADMIN_PASSWORD` | Admin login password | `admin123` ⚠️ **change before any non-trivial deployment** | Yes |
+| `MINISTER_PASSWORD` | Minister login password | `minister123` ⚠️ **change before any non-trivial deployment** | Yes |
 | `DATABASE_PATH` | Path to SQLite database file | `/data/minister.db` | Yes |
 | `PORT` | Server port | `8080` | No |
+
+> ⚠️ **Never deploy with the default passwords.** `admin123` and `minister123` exist only to make local quick-start work. Anyone with the admin password can edit/delete every player and publish or unpublish schedules. Always override them via `.env`, a secret store (Cloud Secret Manager, Key Vault, etc.), or environment variables before the app is reachable from outside your laptop.
 
 ---
 
