@@ -102,9 +102,13 @@ This repository includes Copilot cloud-agent setup and instruction files:
 | Backend | Python 3.11 / Flask 3.0 / SQLite |
 | Frontend | React 18 / TypeScript / Vite |
 | Styling | Tailwind CSS |
-| i18n | react-i18next (5 languages) |
-| Drag & Drop | @dnd-kit |
-| Production Server | gunicorn |
+| Routing | react-router-dom v6 |
+| i18n | react-i18next + i18next (5 languages) |
+| Drag & Drop | @dnd-kit (core / sortable / utilities) |
+| HTTP Client | axios |
+| Icons | lucide-react |
+| Class Utility | clsx |
+| Production Server | gunicorn (single worker for SQLite) |
 | Containerization | Docker (multi-stage build) |
 
 ## Configuration
@@ -113,10 +117,12 @@ This repository includes Copilot cloud-agent setup and instruction files:
 |----------|-------------|---------|
 | `FLASK_ENV` | `development` or `production` | `production` |
 | `SECRET_KEY` | Flask session secret | `dev-secret-key` |
-| `ADMIN_PASSWORD` | Admin login password | `admin123` |
-| `MINISTER_PASSWORD` | Minister login password | `minister123` |
+| `ADMIN_PASSWORD` | Admin login password | `admin123` ⚠️ **change before any non-trivial deployment** |
+| `MINISTER_PASSWORD` | Minister login password | `minister123` ⚠️ **change before any non-trivial deployment** |
 | `DATABASE_PATH` | Path to SQLite database file | `/data/minister.db` |
 | `PORT` | Server port | `8080` |
+
+> ⚠️ **Security:** The defaults `admin123` / `minister123` exist only to make the very first `docker compose up` work. Anyone with the admin password can edit and delete every player and publish/unpublish schedules. **Override these in `.env` (or your secret store) before deploying to any environment that isn't your laptop.**
 
 ## Project Structure
 
@@ -124,20 +130,46 @@ This repository includes Copilot cloud-agent setup and instruction files:
 minister_management/
 ├── backend/
 │   ├── app.py              # Flask app + API routes
-│   ├── database.py         # Schema, queries, point calculations
+│   ├── database.py         # Schema, migrations, settings helpers, point calculations
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
-│   │   ├── pages/          # Home, PlayerForm, AdminDashboard, PublishedSchedule, etc.
-│   │   ├── components/     # LanguageSelector, admin/ subcomponents (incl. AdminSettings)
-│   │   ├── utils/          # Utility modules (affiliate integration, etc.)
-│   │   └── i18n.ts         # All translations
+│   │   ├── pages/
+│   │   │   ├── Home.tsx
+│   │   │   ├── PlayerForm.tsx
+│   │   │   ├── UpdateSubmission.tsx
+│   │   │   ├── PublishedSchedule.tsx
+│   │   │   ├── PlayerGuide.tsx
+│   │   │   ├── AdminLogin.tsx
+│   │   │   ├── AdminDashboard.tsx
+│   │   │   └── AdminGuide.tsx
+│   │   ├── components/
+│   │   │   ├── LanguageSelector.tsx
+│   │   │   ├── TimezoneSelector.tsx
+│   │   │   └── admin/
+│   │   │       ├── PlayerManagement.tsx
+│   │   │       ├── AssignmentManagement.tsx
+│   │   │       └── AdminSettings.tsx
+│   │   ├── utils/
+│   │   │   ├── timezone.ts      # 30-min slot generator + tz helpers
+│   │   │   └── affiliate.ts     # LootBar affiliate links
+│   │   ├── i18n.ts              # All translations (en, ko, zh, tr, ar)
+│   │   ├── App.tsx              # Routing
+│   │   ├── main.tsx
+│   │   └── index.css
 │   ├── package.json
 │   └── vite.config.ts
 ├── Dockerfile              # Multi-stage build (Node + Python)
 ├── docker-compose.yml      # Local development
 ├── .env.example            # Environment template
-└── start.sh                # Docker quick-start script
+├── start.sh                # Docker quick-start script
+├── README.md
+├── QUICK_START.md
+├── USER_GUIDE.md
+├── DEPLOYMENT.md
+├── PROJECT_SUMMARY.md
+├── RECREATION_GUIDE.md
+└── CHANGELOG.md
 ```
 
 ## Documentation
@@ -146,6 +178,8 @@ minister_management/
 - [Deployment Guide](DEPLOYMENT.md) - Bare metal, Docker, Cloud Run, and more
 - [User Guide](USER_GUIDE.md) - For players and ministers
 - [Project Summary](PROJECT_SUMMARY.md) - Technical overview
+- [Recreation Guide](RECREATION_GUIDE.md) - Full from-scratch rebuild reference
+- [Changelog](CHANGELOG.md) - Release history
 
 ## License
 
