@@ -121,6 +121,10 @@ This repository includes Copilot cloud-agent setup and instruction files:
 | `MINISTER_PASSWORD` | Minister login password | `minister123` ⚠️ **change before any non-trivial deployment** |
 | `DATABASE_PATH` | Path to SQLite database file | `/data/minister.db` |
 | `PORT` | Server port | `8080` |
+| `URL_PREFIX` | Sub-path to mount the backend under (e.g. `/ministry`) when behind a path-based reverse proxy. The frontend bundle is prefix-agnostic — `backend/app.py` injects a `<base href>` tag into `index.html` at request time, so a single Docker image works at any prefix without rebuilding. `/health` stays at the root for platform health probes. | _(empty — serve at root)_ |
+| `SQLITE_VFS` | Optional SQLite VFS override. Set to `unix-dotfile` when `DATABASE_PATH` lives on SMB/CIFS (e.g. Azure Files) so SQLite uses on-disk lock files instead of POSIX fcntl byte-range locks. Leave unset on local disks and GCS FUSE. | _(unset)_ |
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the Azure App Service + Cloudflare Tunnel walkthrough that uses these variables.
 
 > ⚠️ **Security:** The defaults `admin123` / `minister123` exist only to make the very first `docker compose up` work. Anyone with the admin password can edit and delete every player and publish/unpublish schedules. **Override these in `.env` (or your secret store) before deploying to any environment that isn't your laptop.**
 

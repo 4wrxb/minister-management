@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
 import os
+import re
 import hashlib
 import time as time_module
 import logging
@@ -67,13 +68,58 @@ init_db(app)
 def health_check():
     return jsonify({'status': 'healthy'}), 200
 
-# Serve React app - handles SPA routing for all non-API paths
+# Serve React app - handles SPA routing for all non-API paths.
+#
+# The frontend bundle is built with Vite's `base: './'` (see frontend/vite.config.ts),
+# which makes asset references relative. To make those relative URLs resolve under
+# the configured URL sub-path (set via URL_PREFIX), we splice a <base href> tag into
+# index.html at request time. The same prefix is exposed as <meta name="app-base">
+# for JS-side consumers (axios baseURL, React Router basename — see frontend/src/utils/appBase.ts).
+_HEAD_RE = re.compile(r'(<head[^>]*>)', re.IGNORECASE)
+_APP_BASE_MARKER = '<meta name="app-base"'
+_INDEX_HTML_CACHE: dict = {}
+
+
+def inject_base_tag(html: str, prefix: str) -> str:
+    """Splice <base href> + <meta name="app-base"> into the <head> of an HTML document.
+
+    `prefix` is the URL sub-path the SPA is hosted at (e.g. "" for root, "/ministry"
+    for a sub-path). The injected <base href> always ends with "/" so relative URLs
+    resolve correctly; the meta tag's content is the normalized prefix without a
+    trailing slash (or "/" for root) which the frontend reads via getAppBase().
+
+    Idempotent: if the marker meta tag is already present, returns the input unchanged.
+    If no <head> tag is found, returns the input unchanged (malformed HTML).
+    """
+    if _APP_BASE_MARKER in html:
+        return html
+    normalized = prefix.rstrip('/')
+    base_href = (normalized + '/') if normalized else '/'
+    meta_content = normalized if normalized else '/'
+    tags = f'<base href="{base_href}"><meta name="app-base" content="{meta_content}">'
+    match = _HEAD_RE.search(html)
+    if not match:
+        return html
+    return html[:match.end()] + tags + html[match.end():]
+
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve(path):
-    if path and os.path.exists(os.path.join(STATIC_DIR, path)):
-        return send_from_directory(STATIC_DIR, path)
-    return send_from_directory(STATIC_DIR, 'index.html')
+    if path:
+        static_target = os.path.join(STATIC_DIR, path)
+        if os.path.isfile(static_target):
+            return send_from_directory(STATIC_DIR, path)
+    index_path = os.path.join(STATIC_DIR, 'index.html')
+    if not os.path.isfile(index_path):
+        return Response('Not Found', status=404)
+    prefix = request.script_root  # '' when no dispatcher, '/ministry' when prefixed
+    cached = _INDEX_HTML_CACHE.get(prefix)
+    if cached is None:
+        with open(index_path, encoding='utf-8') as f:
+            cached = inject_base_tag(f.read(), prefix)
+        _INDEX_HTML_CACHE[prefix] = cached
+    return Response(cached, mimetype='text/html')
 
 # API Routes
 
@@ -1097,6 +1143,24 @@ def delete_all_players():
     except Exception as e:
         logger.error(f"Error deleting all players: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
+
+# Optional URL sub-path prefix (e.g. "/ministry"). When set, the Flask app is
+# mounted under that prefix so it can run behind a path-based reverse proxy
+# (e.g. Cloudflare Tunnel routing /ministry/* to this service). /health is
+# kept at the root so platform health probes don't need to be prefix-aware.
+URL_PREFIX = os.getenv('URL_PREFIX', '').rstrip('/')
+if URL_PREFIX:
+    from werkzeug.middleware.dispatcher import DispatcherMiddleware
+    from werkzeug.wrappers import Response as WzResponse
+
+    def _root_app(environ, start_response):
+        if environ.get('PATH_INFO') == '/health':
+            return WzResponse('{"status":"healthy"}', mimetype='application/json')(environ, start_response)
+        return WzResponse('Not Found', status=404)(environ, start_response)
+
+    app.config['APPLICATION_ROOT'] = URL_PREFIX
+    app.config['SESSION_COOKIE_PATH'] = URL_PREFIX
+    app.wsgi_app = DispatcherMiddleware(_root_app, {URL_PREFIX: app.wsgi_app})
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))

@@ -94,7 +94,7 @@ minister_management/
 
 ## Environment Variables
 
-Create a `.env` file in the `backend/` directory (or set via Docker/Cloud Run):
+Create a `.env` file in the `backend/` directory (or set via Docker / Cloud Run / App Service):
 
 ```env
 FLASK_ENV=production
@@ -103,6 +103,23 @@ ADMIN_PASSWORD=your-admin-password-here
 MINISTER_PASSWORD=your-minister-password-here
 DATABASE_PATH=/data/minister.db
 PORT=8080
+```
+
+**Optional reverse-proxy / network-filesystem extras** (all default to safe values when unset):
+
+```env
+# Sub-path hosting behind a reverse proxy (e.g. Cloudflare Tunnel routing
+# example.com/ministry/* to this service). URL_PREFIX mounts the Flask app
+# under the prefix while keeping /health at the root for health probes.
+# The frontend bundle is prefix-agnostic — backend/app.py injects a
+# <base href> tag into index.html at request time, so the same image
+# works at any prefix without a rebuild.
+URL_PREFIX=/ministry
+
+# SQLite VFS override. Set to unix-dotfile when DATABASE_PATH lives on
+# SMB/CIFS (e.g. Azure Files) so SQLite uses on-disk lock files instead
+# of POSIX fcntl byte-range locks. Leave unset on local disks and GCS FUSE.
+SQLITE_VFS=unix-dotfile
 ```
 
 **`.env.example`:**
@@ -116,13 +133,20 @@ ADMIN_PASSWORD=your-admin-password-here
 MINISTER_PASSWORD=your-minister-password-here
 
 # Database
-# Docker Compose: /app/data/minister.db (default, volume-mounted)
-# Bare metal dev: ./data/minister.db (relative to backend/)
-# Cloud Run:      /data/minister.db (GCS FUSE mount)
+# Docker Compose:        /app/data/minister.db (default, volume-mounted)
+# Bare metal dev:        ./data/minister.db (relative to backend/)
+# Cloud Run:             /data/minister.db (GCS FUSE mount)
+# Azure App Service:     /data/minister.db (Azure Files SMB mount — also set SQLITE_VFS=unix-dotfile)
 DATABASE_PATH=/app/data/minister.db
 
 # Server
 PORT=8080
+
+# Optional reverse-proxy / sub-path hosting
+# URL_PREFIX=
+
+# Optional SQLite VFS (set to unix-dotfile on SMB/CIFS — e.g. Azure Files)
+# SQLITE_VFS=
 ```
 
 ---
@@ -155,7 +179,13 @@ def get_db():
     """Get database connection using Flask g context (matches tyrant-poll pattern)."""
     if 'db' not in g:
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-        g.db = sqlite3.connect(DB_PATH)
+        # Optional SQLite VFS override (e.g. SQLITE_VFS=unix-dotfile on SMB/CIFS
+        # filesystems like Azure Files, which don't honour POSIX fcntl locks).
+        vfs = os.environ.get('SQLITE_VFS')
+        if vfs:
+            g.db = sqlite3.connect(f"file:{DB_PATH}?vfs={vfs}", uri=True)
+        else:
+            g.db = sqlite3.connect(DB_PATH)
         g.db.row_factory = sqlite3.Row
     return g.db
 
@@ -591,13 +621,28 @@ init_db(app)
 def health_check():
     return jsonify({'status': 'healthy'}), 200
 
-# Serve React app - handles SPA routing for all non-API paths
+# Serve React app — handles SPA routing for all non-API paths. For sub-path
+# hosting, injects a <base href> tag into index.html at request time so the
+# Vite bundle's relative asset URLs resolve under the prefix.
+_INDEX_HTML_CACHE = {}
+
+def inject_base_tag(html, prefix):
+    base = f'{prefix}/' if prefix else '/'
+    tags = f'<base href="{base}"><meta name="app-base" content="{prefix or "/"}">'
+    return re.sub(r'(<head[^>]*>)', r'\1' + tags, html, count=1)
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve(path):
     if path and os.path.exists(os.path.join(STATIC_DIR, path)):
         return send_from_directory(STATIC_DIR, path)
-    return send_from_directory(STATIC_DIR, 'index.html')
+    prefix = request.script_root or ''
+    cached = _INDEX_HTML_CACHE.get(prefix)
+    if cached is None:
+        with open(os.path.join(STATIC_DIR, 'index.html'), encoding='utf-8') as fh:
+            cached = inject_base_tag(fh.read(), prefix)
+        _INDEX_HTML_CACHE[prefix] = cached
+    return cached, 200, {'Content-Type': 'text/html; charset=utf-8'}
 
 # API Routes
 
@@ -1319,6 +1364,24 @@ def delete_all_players():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+URL_PREFIX = os.getenv('URL_PREFIX', '').rstrip('/')
+if URL_PREFIX:
+    # Mount the Flask app under a URL sub-path (e.g. "/ministry") for path-
+    # based reverse proxies (Cloudflare Tunnel route, nginx location block).
+    # /health is kept at the root so platform health probes don't need to
+    # be prefix-aware.
+    from werkzeug.middleware.dispatcher import DispatcherMiddleware
+    from werkzeug.wrappers import Response as WzResponse
+
+    def _root_app(environ, start_response):
+        if environ.get('PATH_INFO') == '/health':
+            return WzResponse('{"status":"healthy"}', mimetype='application/json')(environ, start_response)
+        return WzResponse('Not Found', status=404)(environ, start_response)
+
+    app.config['APPLICATION_ROOT'] = URL_PREFIX
+    app.config['SESSION_COOKIE_PATH'] = URL_PREFIX
+    app.wsgi_app = DispatcherMiddleware(_root_app, {URL_PREFIX: app.wsgi_app})
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=os.getenv('FLASK_ENV') == 'development')
@@ -1381,7 +1444,13 @@ if __name__ == '__main__':
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-export default defineConfig({
+// Use relative asset paths (`./assets/...`) in the production bundle so the
+// same image can be hosted at any URL sub-path. backend/app.py injects a
+// <base href> tag into index.html at request time and the browser resolves
+// the relative URLs against that base. Dev keeps the default '/' so the
+// Vite dev server (HMR, module proxying) behaves normally.
+export default defineConfig(({ command }) => ({
+  base: command === 'build' ? './' : '/',
   plugins: [react()],
   server: {
     proxy: {
@@ -1391,7 +1460,7 @@ export default defineConfig({
       }
     }
   }
-})
+}))
 ```
 
 **`frontend/tsconfig.json`:**
