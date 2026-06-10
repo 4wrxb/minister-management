@@ -40,7 +40,10 @@ CORS(app)
 ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'admin123')
 MINISTER_PASSWORD = os.getenv('MINISTER_PASSWORD', 'minister123')
 
-# WOS API secret (move to env var for security)
+# Salt used to sign requests to the public WOS player-lookup API at
+# wos-giftcode-api.centurygame.com. Not a real secret: it's a constant
+# extracted from the public gift-code site's JavaScript, shared across
+# every WOS community tool. Override via env var only if upstream rotates.
 WOS_API_SECRET = os.getenv('WOS_API_SECRET', 'tB87#kPtkxqOS2')
 
 # Valid auth tokens
