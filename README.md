@@ -88,6 +88,13 @@ npm run dev
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for Docker, Google Cloud Run, and other platform instructions.
 
+### Copilot Cloud Agent Configuration (for future changes)
+
+This repository includes Copilot cloud-agent setup and instruction files:
+
+- `.github/workflows/copilot-setup-steps.yml` - preinstalls backend/frontend dependencies in the cloud agent environment
+- `.github/copilot-instructions.md` - defines validation commands and repository guardrails for future changes
+
 ## Tech Stack
 
 | Layer | Technology |
