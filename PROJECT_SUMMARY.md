@@ -123,24 +123,17 @@ minister_management/
 
 ## Point Calculation System
 
-### Monday - Construction
-```
-Points = (construction_days * 1440) + (general_days * 1440)
-         + (refined_crystals * 30000) + (fire_crystals * 2000)
-```
+Points are scored per ministry day: **Monday** combines construction (+ general)
+speedups with fire crystals and refined fire crystals; **Tuesday or Friday**
+(state-configurable research day) combines research (+ general) speedups with
+fire crystal shards; **Thursday** rewards troop training speedups directly.
 
-### Tuesday - Research
-```
-Points = (research_days * 1440) + (general_days * 1440)
-         + (crystal_shards * 1000)
-```
-
-### Thursday - Troop Training
-```
-Points = troop_training_days
-```
-
-Note: 1 day = 1440 minutes
+The canonical formula lives in `calculate_points()` in
+[`backend/database.py`](backend/database.py) (see the function's docstring for
+units and inputs). The user-facing description is in
+[USER_GUIDE.md → Point Calculation System](USER_GUIDE.md#point-calculation-system),
+and a full technical restatement is in
+[RECREATION_GUIDE.md → Point Calculation System](RECREATION_GUIDE.md#point-calculation-system).
 
 ## API Endpoints
 

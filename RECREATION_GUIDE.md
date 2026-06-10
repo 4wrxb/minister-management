@@ -1699,7 +1699,13 @@ services:
 
 ### Point Calculation System
 
-Points are calculated differently per day type:
+> Canonical formula: the `calculate_points()` function in `backend/database.py`
+> (see the full docstring there). This guide restates it for recreation purposes;
+> if the two ever disagree, the code is authoritative. The user-facing
+> description lives in [USER_GUIDE.md](USER_GUIDE.md#point-calculation-system).
+
+Points are calculated differently per day type. Speedup fields are stored in
+**days**; 1 day = 1440 minutes (24 × 60).
 
 **Monday (Construction Day):**
 ```
@@ -1707,7 +1713,11 @@ points = (construction_speedups_days × 1440) + (general_speedups_days × 1440)
          + (refined_fire_crystals × 30,000) + (fire_crystals × 2,000)
 ```
 
-**Tuesday/Friday (Research Day):**
+**Tuesday or Friday (Research Day):**
+
+The state selects one of Tuesday or Friday via the `research_day` setting;
+the formula is identical for both.
+
 ```
 points = (research_speedups_days × 1440) + (general_speedups_days × 1440)
          + (fire_crystal_shards × 1,000)
@@ -1718,7 +1728,9 @@ points = (research_speedups_days × 1440) + (general_speedups_days × 1440)
 points = troop_training_speedups_days (raw value, 1 point per day)
 ```
 
-> Note: 1 day = 1440 minutes. Speedup values are stored in days and converted to minutes for construction/research.
+> Note: Speedup values are stored in days and converted to minutes for
+> construction/research; troop training is the only day that keeps the raw
+> "days" value.
 
 ### Auto-Assignment Algorithm
 

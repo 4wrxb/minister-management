@@ -97,7 +97,19 @@ minister_management/
 
 ## Important Business Logic
 
-<!-- Point Calculation System content lives here; owned by point-calc PR -->
+### Point Calculation System
+
+Three ministry days are scored separately: **Monday** (construction + general
+speedups, plus fire crystals and refined fire crystals), **Tuesday or Friday**
+(research + general speedups, plus fire crystal shards — the state chooses one
+of the two days via the `research_day` setting), and **Thursday** (troop
+training speedups, scored directly).
+
+The canonical implementation — including units (1 day = 1440 minutes), the
+exact input fields per day, and the formula — is the `calculate_points()`
+function in [`backend/database.py`](backend/database.py); see its docstring.
+The user-facing description lives in
+[USER_GUIDE.md → Point Calculation System](USER_GUIDE.md#point-calculation-system).
 
 ### Auto-Assignment Algorithm
 
@@ -292,9 +304,12 @@ npm run dev                   # http://localhost:5173
 3. If RTL, ensure `dir="rtl"` handling is consistent with Arabic.
 
 ### Modifying Point Calculation
-1. Edit `calculate_points()` in `backend/database.py`.
-2. Update the Point Calculation section of `README.md`, `PROJECT_SUMMARY.md`, `USER_GUIDE.md`, and `claude.md`.
-3. No DB migration needed — points are calculated on the fly.
+1. Edit `calculate_points()` in `backend/database.py` **and update its docstring** — the docstring is the canonical formula reference; everything else links to it. No DB migration needed; points are calculated on the fly.
+2. Update or add tests in `tests/backend/test_points.py` so the new behaviour is pinned. (Per the *Before Committing* checklist, backend logic changes require backend unit tests.)
+3. Sync the docs that carry the formula:
+   - User-facing: `USER_GUIDE.md` (Point Calculation System) — the canonical player-facing prose.
+   - Internal: `RECREATION_GUIDE.md` (Point Calculation System) — the canonical technical restatement; `CHANGELOG.md` under `[Unreleased]`.
+4. The short link-out summaries in `README.md`, `PROJECT_SUMMARY.md`, and `claude.md` usually don't need to change unless the high-level day structure (which days are scored, what each rewards at the headline level) changes.
 
 ### Adding a New Resource / Player Field
 1. Add the column to the `players` table in `backend/database.py` (use the idempotent migrations list).

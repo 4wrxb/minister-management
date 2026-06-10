@@ -160,13 +160,24 @@ A comprehensive in-app **Admin Guide** is available at `/admin/guide`, accessibl
 
 ## Point Calculation System
 
+> This is the canonical **player-facing** description of how points are scored.
+> The technical formula lives in the docstring of `calculate_points()` in
+> [`backend/database.py`](backend/database.py), which is the single source
+> of truth — if anything here ever disagrees with the code, the code wins.
+
+Each ministry day uses its own formula. All speedups are entered in **days**,
+and 1 day equals 1440 minutes (24 × 60).
+
 ### Monday - Construction Day
 - **1 point** per minute of construction speedups
 - **1 point** per minute of general speedups
 - **30,000 points** per refined fire crystal
 - **2,000 points** per fire crystal
 
-### Tuesday - Research Day
+### Tuesday or Friday - Research Day
+The state runs research day on either Tuesday or Friday (configurable via the
+**Research Day Toggle** in admin settings). The formula is the same either way:
+
 - **1 point** per minute of research speedups
 - **1 point** per minute of general speedups
 - **1,000 points** per fire crystal shard
