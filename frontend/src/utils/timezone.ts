@@ -63,7 +63,9 @@ export function generateAssignmentSlots(): string[] {
   const slots: string[] = ['23:50'];
   let hour = 0;
   let minute = 20;
-  while (true) {
+  // 49 total slots: leading '23:50' plus 48 half-hour entries from 00:20 to 23:50+.
+  // The inner `break` is the real termination; the loop bound is a safety upper limit.
+  while (slots.length < 49) {
     const slot = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
     if (slot === '23:50') {
       slots.push('23:50+'); // End-of-day 23:50 slot (distinct from the pre-midnight one)

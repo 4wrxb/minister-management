@@ -57,6 +57,7 @@ export default function PlayerManagement() {
     axios.get('/api/settings/research-day')
       .then(res => setResearchDay(res.data.research_day))
       .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Mount-only initialization; fetchPlayers is recreated each render so adding it would cause a re-fetch loop.
   }, []);
 
   const researchDayName = t(`form.${researchDay === 'friday' ? 'fridayName' : 'tuesdayName'}`);
@@ -71,8 +72,9 @@ export default function PlayerManagement() {
         headers: { Authorization: `Bearer ${token}` },
       });
       setPlayers(response.data);
-    } catch (err: any) {
-      setError(err.response?.data?.error || t('admin.fetchError'));
+    } catch (err) {
+      const msg = (axios.isAxiosError(err) && err.response?.data?.error) || t('admin.fetchError');
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -88,7 +90,7 @@ export default function PlayerManagement() {
   };
 
   const filteredAndSortedPlayers = useMemo(() => {
-    let filtered = players.filter(
+    const filtered = players.filter(
       (player) =>
         player.game_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         player.fid.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -120,8 +122,9 @@ export default function PlayerManagement() {
       });
       setPlayers(players.filter((p) => p.id !== playerId));
       setShowDeleteConfirm(null);
-    } catch (err: any) {
-      setError(err.response?.data?.error || t('admin.deleteError'));
+    } catch (err) {
+      const msg = (axios.isAxiosError(err) && err.response?.data?.error) || t('admin.deleteError');
+      setError(msg);
     }
   };
 
@@ -135,8 +138,9 @@ export default function PlayerManagement() {
       });
       await fetchPlayers();
       setEditingPlayer(null);
-    } catch (err: any) {
-      setError(err.response?.data?.error || t('admin.playerUpdateError'));
+    } catch (err) {
+      const msg = (axios.isAxiosError(err) && err.response?.data?.error) || t('admin.playerUpdateError');
+      setError(msg);
     }
   };
 
@@ -148,8 +152,9 @@ export default function PlayerManagement() {
       });
       setPlayers([]);
       setShowDeleteAllConfirm(false);
-    } catch (err: any) {
-      setError(err.response?.data?.error || t('admin.deleteAllError'));
+    } catch (err) {
+      const msg = (axios.isAxiosError(err) && err.response?.data?.error) || t('admin.deleteAllError');
+      setError(msg);
     }
   };
 
@@ -167,8 +172,9 @@ export default function PlayerManagement() {
       document.body.appendChild(link);
       link.click();
       link.remove();
-    } catch (err: any) {
-      setError(err.response?.data?.error || t('admin.exportError'));
+    } catch (err) {
+      const msg = (axios.isAxiosError(err) && err.response?.data?.error) || t('admin.exportError');
+      setError(msg);
     }
   };
 
@@ -192,11 +198,12 @@ export default function PlayerManagement() {
       const { imported, updated, errors } = response.data;
       setImportMessage(t('admin.importSuccess', { imported, updated }) + (errors > 0 ? ` (${errors} errors)` : ''));
       await fetchPlayers();
-    } catch (err: any) {
+    } catch (err) {
       if (err instanceof SyntaxError) {
         setError(t('admin.importInvalidFile'));
       } else {
-        setError(err.response?.data?.error || t('admin.importError'));
+        const msg = (axios.isAxiosError(err) && err.response?.data?.error) || t('admin.importError');
+        setError(msg);
       }
     }
     // Reset the file input
@@ -431,7 +438,7 @@ export default function PlayerManagement() {
                     <label className="block text-sm font-medium text-theme-text mb-2">{label}</label>
                     <input
                       type="number"
-                      value={(editingPlayer as any)[key]}
+                      value={editingPlayer[key as keyof Player] as number}
                       onChange={(e) =>
                         setEditingPlayer({
                           ...editingPlayer,
