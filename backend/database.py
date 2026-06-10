@@ -10,7 +10,14 @@ def get_db():
     """Get database connection using Flask g context (matches tyrant-poll pattern)."""
     if 'db' not in g:
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-        g.db = sqlite3.connect(DB_PATH)
+        # Use unix-dotfile VFS so SQLite uses on-disk lock files instead of
+        # POSIX fcntl locks. Required on network filesystems (SMB/CIFS like
+        # Azure Files) that don't honor fcntl byte-range locks reliably.
+        vfs = os.environ.get('SQLITE_VFS')
+        if vfs:
+            g.db = sqlite3.connect(f"file:{DB_PATH}?vfs={vfs}", uri=True)
+        else:
+            g.db = sqlite3.connect(DB_PATH)
         g.db.row_factory = sqlite3.Row
     return g.db
 

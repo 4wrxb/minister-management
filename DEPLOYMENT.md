@@ -1,16 +1,18 @@
 # Deployment Guide
 
-This guide covers four deployment options, from simplest to most production-ready.
+This guide covers five deployment options, from simplest to most production-ready.
 
 ## Table of Contents
 
 1. [Option 1: Bare Metal](#option-1-bare-metal)
 2. [Option 2: Docker / Docker Compose](#option-2-docker--docker-compose)
 3. [Option 3: Google Cloud Run](#option-3-google-cloud-run)
-4. [Option 4: Other Cloud Platforms](#option-4-other-cloud-platforms)
-5. [Environment Variables](#environment-variables)
-6. [Backup & Restore](#backup--restore)
-7. [Monitoring & Troubleshooting](#monitoring--troubleshooting)
+4. [Option 4: Azure Container Apps](#option-4-azure-container-apps)
+5. [Option 5: Other Cloud Platforms](#option-5-other-cloud-platforms)
+6. [Cloudflare Protection](#cloudflare-protection)
+7. [Environment Variables](#environment-variables)
+8. [Backup & Restore](#backup--restore)
+9. [Monitoring & Troubleshooting](#monitoring--troubleshooting)
 
 ---
 
@@ -325,7 +327,228 @@ gcloud run deploy minister-management \
 
 ---
 
-## Option 4: Other Cloud Platforms
+## Option 4: Azure Container Apps
+
+This is the recommended Azure deployment for this app. It uses Azure Files mounted into Azure Container Apps for persistent SQLite storage.
+
+### Architecture
+
+```
+Internet -> Cloudflare -> Azure Container Apps (1+ replicas)
+                                                                     |
+                                                            /data mount
+                                                                     |
+                                                    Azure Files share
+                                                         (minister.db)
+```
+
+### Critical Configuration Notes
+
+Before deploying, understand these requirements:
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| Replica baseline | **Min 1** | Reduces cold starts and storage mount timing issues. |
+| Gunicorn workers | **1** | Multiple workers can corrupt SQLite behavior on shared network storage. |
+| SQLite journal mode | `DELETE` | WAL mode sidecar files are fragile on network filesystems. |
+| Persistent volume mount | `/data` | App defaults to `/data/minister.db`. |
+
+### Step 1: Prerequisites
+
+- Azure CLI 2.58+
+- Docker 24+
+- A Cloudflare-managed domain (already proxied)
+
+Install Container Apps extension and providers:
+
+```bash
+az extension add --name containerapp --upgrade
+az provider register --namespace Microsoft.App
+az provider register --namespace Microsoft.OperationalInsights
+```
+
+### Step 2: Set Variables
+
+```bash
+export LOCATION=eastus
+export RESOURCE_GROUP=rg-minister-prod
+export ACA_ENV=acae-minister-prod
+export ACR_NAME=acrministerprod
+export APP_NAME=minister-management
+export STORAGE_NAME=stministerprod
+export FILE_SHARE=minister-data
+export STORAGE_MOUNT_NAME=minister-storage
+export DB_PATH=/data/minister.db
+
+# Optional custom hostname you will proxy with Cloudflare
+export APP_HOST=minister.yourdomain.com
+```
+
+> Storage account and ACR names must be globally unique and lowercase.
+
+### Step 3: Create Resource Group, Registry, and Environment
+
+```bash
+az group create --name $RESOURCE_GROUP --location $LOCATION
+
+az acr create \
+    --name $ACR_NAME \
+    --resource-group $RESOURCE_GROUP \
+    --location $LOCATION \
+    --sku Basic
+
+az containerapp env create \
+    --name $ACA_ENV \
+    --resource-group $RESOURCE_GROUP \
+    --location $LOCATION
+```
+
+### Step 4: Build and Push Image
+
+```bash
+ACR_LOGIN_SERVER=$(az acr show --name $ACR_NAME --query loginServer -o tsv)
+IMAGE=$ACR_LOGIN_SERVER/minister-management:$(date +%Y%m%d-%H%M)
+
+az acr login --name $ACR_NAME
+docker build -t $IMAGE .
+docker push $IMAGE
+```
+
+### Step 5: Create Azure Files Storage
+
+```bash
+az storage account create \
+    --name $STORAGE_NAME \
+    --resource-group $RESOURCE_GROUP \
+    --location $LOCATION \
+    --sku Standard_LRS \
+    --kind StorageV2
+
+STORAGE_KEY=$(az storage account keys list \
+    --resource-group $RESOURCE_GROUP \
+    --account-name $STORAGE_NAME \
+    --query "[0].value" -o tsv)
+
+az storage share-rm create \
+    --resource-group $RESOURCE_GROUP \
+    --storage-account $STORAGE_NAME \
+    --name $FILE_SHARE \
+    --quota 20  # Size in GiB
+```
+
+### Step 6: Register Storage with Container Apps Environment
+
+```bash
+az containerapp env storage set \
+    --name $ACA_ENV \
+    --resource-group $RESOURCE_GROUP \
+    --storage-name $STORAGE_MOUNT_NAME \
+    --azure-file-account-name $STORAGE_NAME \
+    --azure-file-account-key "$STORAGE_KEY" \
+    --azure-file-share-name $FILE_SHARE \
+    --access-mode ReadWrite
+```
+
+### Step 7: Create the Container App
+
+Generate secrets safely:
+
+```bash
+export SECRET_KEY=$(python -c "import secrets; print(secrets.token_hex(32))")
+export ADMIN_PASSWORD='change-me-admin'
+export MINISTER_PASSWORD='change-me-minister'
+
+ACR_USERNAME=$(az acr credential show \
+    --name $ACR_NAME \
+    --resource-group $RESOURCE_GROUP \
+    --query username -o tsv)
+
+ACR_PASSWORD=$(az acr credential show \
+    --name $ACR_NAME \
+    --resource-group $RESOURCE_GROUP \
+    --query "passwords[0].value" -o tsv)
+```
+
+Create app with ingress, storage mount, secrets, and SQLite-safe scaling:
+
+```bash
+az containerapp create \
+    --name $APP_NAME \
+    --resource-group $RESOURCE_GROUP \
+    --environment $ACA_ENV \
+    --image $IMAGE \
+    --registry-server $ACR_LOGIN_SERVER \
+    --registry-username "$ACR_USERNAME" \
+    --registry-password "$ACR_PASSWORD" \
+    --target-port 8080 \
+    --ingress external \
+    --min-replicas 1 \
+    --max-replicas 2 \
+    --cpu 0.5 \
+    --memory 1.0Gi \
+    --secrets "secret-key=$SECRET_KEY" "admin-password=$ADMIN_PASSWORD" "minister-password=$MINISTER_PASSWORD" \
+    --env-vars "FLASK_ENV=production" "DATABASE_PATH=$DB_PATH" "PORT=8080" "SECRET_KEY=secretref:secret-key" "ADMIN_PASSWORD=secretref:admin-password" "MINISTER_PASSWORD=secretref:minister-password" \
+    --storage-mounts "mountPath=/data,storageName=$STORAGE_MOUNT_NAME"
+```
+
+### Step 8: Validate Deployment
+
+```bash
+APP_FQDN=$(az containerapp show \
+    --name $APP_NAME \
+    --resource-group $RESOURCE_GROUP \
+    --query properties.configuration.ingress.fqdn -o tsv)
+
+curl https://$APP_FQDN/health
+```
+
+Expected response:
+
+```json
+{"status":"healthy"}
+```
+
+### Step 9: Configure Custom Domain in Azure
+
+Add and validate custom domain (Cloudflare DNS records required):
+
+```bash
+az containerapp hostname add \
+    --name $APP_NAME \
+    --resource-group $RESOURCE_GROUP \
+    --hostname $APP_HOST
+```
+
+Use the validation details from the command output to create required DNS records in Cloudflare.
+
+Then create/bind certificate in Azure using the Azure Portal (Container App -> Custom domains) or the latest supported CLI commands for your CLI version.
+
+Use this command to verify domain binding status:
+
+```bash
+az containerapp hostname list \
+    --name $APP_NAME \
+    --resource-group $RESOURCE_GROUP
+```
+
+### Updating
+
+```bash
+# Build/push a new image tag
+IMAGE=$ACR_LOGIN_SERVER/minister-management:$(date +%Y%m%d-%H%M)
+docker build -t $IMAGE .
+docker push $IMAGE
+
+# Point app to the new image
+az containerapp update \
+    --name $APP_NAME \
+    --resource-group $RESOURCE_GROUP \
+    --image $IMAGE
+```
+
+---
+
+## Option 5: Other Cloud Platforms
 
 The app runs anywhere that supports Docker and persistent filesystem storage for SQLite.
 
@@ -360,6 +583,73 @@ The app runs anywhere that supports Docker and persistent filesystem storage for
 - **Render** - Docker deployment with persistent disk option.
 
 > **Key consideration:** SQLite requires a persistent filesystem. Ephemeral container storage will lose data on restart. Always verify your platform provides persistent disk mounts.
+
+---
+
+## Cloudflare Protection
+
+This section assumes your DNS is already hosted in Cloudflare and your app is running in Azure Container Apps.
+
+### Step 1: DNS and Proxy
+
+1. In Cloudflare DNS, create `CNAME` for your app hostname to the Azure Container Apps FQDN.
+2. Keep Proxy status set to **Proxied** (orange cloud).
+3. Set low TTL during first rollout.
+
+### Step 2: SSL/TLS
+
+In Cloudflare SSL/TLS settings:
+
+1. Set mode to **Full (strict)**.
+2. Enable **Always Use HTTPS**.
+3. Enable **Automatic HTTPS Rewrites**.
+4. Keep minimum TLS at 1.2 or higher.
+
+### Step 3: WAF Managed Rules
+
+In Security -> WAF:
+
+1. Enable Cloudflare Managed Ruleset.
+2. Start in Log mode for 15-30 minutes if this is your first deployment.
+3. Switch to Block mode after validating no false positives on player form submissions.
+
+### Step 4: Rate Limiting Rules
+
+Create baseline rules:
+
+1. Path contains `/api/admin/login`: challenge or block after 10 requests/minute per IP.
+2. Path starts with `/api/admin/`: challenge after 60 requests/minute per IP.
+3. Path starts with `/api/`: throttle at 180 requests/minute per IP.
+
+These are safe starter values. Tune using real traffic patterns.
+
+### Step 5: Cache Rules
+
+1. Cache static asset paths (`/assets/*`) with standard cache behavior.
+2. Bypass cache for `/api/*`, `/health`, and authenticated/admin paths.
+
+### Step 6: Admin Hardening (Recommended)
+
+For stronger protection, add an extra challenge on admin UI and API paths:
+
+1. Path starts with `/admin` -> Managed Challenge.
+2. Path starts with `/api/admin` -> Managed Challenge.
+
+Optional follow-up: add Cloudflare Access policy for `/admin*` and `/api/admin*` so only approved identities can reach admin pages.
+
+### Step 7: Validate Through Cloudflare
+
+```bash
+curl -I https://$APP_HOST/
+curl https://$APP_HOST/health
+```
+
+Check that:
+
+- Health endpoint responds successfully.
+- TLS certificate is valid.
+- Requests include Cloudflare headers (for example, `cf-ray`).
+- API responses are not cached.
 
 ---
 
@@ -398,6 +688,26 @@ gsutil cp gs://$BUCKET_NAME/minister.db ./backups/minister_$(date +%Y%m%d).db
 gsutil cp ./backups/minister_20260306.db gs://$BUCKET_NAME/minister.db
 ```
 
+### Azure Files
+
+```bash
+# Backup from Azure Files to local
+az storage file download \
+    --account-name $STORAGE_NAME \
+    --account-key "$STORAGE_KEY" \
+    --share-name $FILE_SHARE \
+    --path minister.db \
+    --dest ./backups/minister_$(date +%Y%m%d).db
+
+# Restore from local to Azure Files
+az storage file upload \
+    --account-name $STORAGE_NAME \
+    --account-key "$STORAGE_KEY" \
+    --share-name $FILE_SHARE \
+    --source ./backups/minister_20260306.db \
+    --path minister.db
+```
+
 ### Docker
 
 ```bash
@@ -429,6 +739,12 @@ docker compose logs -f
 # Cloud Run
 gcloud run services logs read minister-management --region=us-central1
 
+# Azure Container Apps
+az containerapp logs show \
+    --name $APP_NAME \
+    --resource-group $RESOURCE_GROUP \
+    --follow
+
 # systemd
 journalctl -u minister -f
 ```
@@ -453,3 +769,13 @@ journalctl -u minister -f
 - Ensure `--workers 1` in gunicorn CMD (multiple workers break SQLite on GCS FUSE)
 - Verify `journal_mode=DELETE` is set (check `database.py`)
 - If you see `OutOfOrderError`, delete the database from the GCS bucket and let it recreate
+
+**Azure Container Apps database errors:**
+- Ensure Azure Files is mounted at `/data` and `DATABASE_PATH=/data/minister.db`
+- Keep single-worker gunicorn (already set in Dockerfile)
+- If database becomes corrupt, restore from backup and restart the app revision
+
+**Cloudflare blocks valid traffic:**
+- Switch new WAF/rate-limit rules to Log or Challenge mode first
+- Exclude trusted admin IPs temporarily while tuning
+- Verify `/api/*` routes are not accidentally cached

@@ -17,7 +17,7 @@ function App() {
   document.documentElement.dir = i18n.language === 'ar' ? 'rtl' : 'ltr';
 
   return (
-    <Router>
+    <Router basename={import.meta.env.BASE_URL}>
       <div className="min-h-screen flex flex-col">
         <header className="w-full py-3 px-4 flex justify-end">
           <LanguageSelector />

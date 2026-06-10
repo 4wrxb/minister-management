@@ -1093,6 +1093,20 @@ def delete_all_players():
         logger.error(f"Error deleting all players: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
+URL_PREFIX = os.getenv('URL_PREFIX', '').rstrip('/')
+if URL_PREFIX:
+    from werkzeug.middleware.dispatcher import DispatcherMiddleware
+    from werkzeug.wrappers import Response as WzResponse
+
+    def _root_app(environ, start_response):
+        if environ.get('PATH_INFO') == '/health':
+            return WzResponse('{"status":"healthy"}', mimetype='application/json')(environ, start_response)
+        return WzResponse('Not Found', status=404)(environ, start_response)
+
+    app.config['APPLICATION_ROOT'] = URL_PREFIX
+    app.config['SESSION_COOKIE_PATH'] = URL_PREFIX
+    app.wsgi_app = DispatcherMiddleware(_root_app, {URL_PREFIX: app.wsgi_app})
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=os.getenv('FLASK_ENV') == 'development')
