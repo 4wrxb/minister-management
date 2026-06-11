@@ -82,21 +82,23 @@ docker compose down -v
 
 ## CI Workflow
 
-**File:** `.github/workflows/e2e-tests.yml`  
+**File:** `.github/workflows/docker-integration.yml`  
 **Triggers:** push or PR to `main`, manual `workflow_dispatch`  
 **Runner:** `ubuntu-latest`
 
 Steps:
 1. Checkout code
-2. `docker compose up -d --build` — builds the image from scratch
-3. Poll `GET /health` every 3 s until healthy (60 s timeout)
-4. Set up Node.js 18
-5. `cd tests/e2e && npm install`
-6. `npx playwright install --with-deps chromium`
-7. `npx playwright test`
-8. On failure: upload `playwright-report/` as a GitHub Actions artifact (7-day retention)
-9. On failure: `docker compose logs` dumped to console
-10. Always: `docker compose down -v`
+2. Build Docker image with `docker/build-push-action` using BuildKit cache (`cache-from/cache-to: type=gha`)
+3. Start container with `docker compose up -d --no-build` (reuses the already-built image)
+4. Poll `GET /health` every 3 s until healthy (60 s timeout)
+5. Run smoke checks (`/health`, SPA root/deep links, container log crash scan)
+6. Set up Node.js 18
+7. `cd tests/e2e && npm install`
+8. `npx playwright install --with-deps chromium`
+9. `npx playwright test`
+10. On failure: upload `playwright-report/` as a GitHub Actions artifact (7-day retention)
+11. On failure: `docker compose logs` dumped to console
+12. Always: `docker compose down -v`
 
 ---
 

@@ -45,7 +45,7 @@ npx vitest run src/__tests__/AdminLogin.test.tsx
 
 | Job | Steps | Gating? |
 |---|---|---|
-| `lint` | checkout → Node setup → `npm ci` → `npm run lint` | No (`continue-on-error: true`) |
+| `lint` | checkout → Node setup → `npm ci` → `npm run lint` | Yes |
 | `vitest` | checkout → Node setup → `npm ci` → `npm test` | Yes |
 
 > Docker is **not** required. The suite runs in the raw GitHub Actions runner.
@@ -80,7 +80,7 @@ npx vitest run src/__tests__/AdminLogin.test.tsx
 | Test | Steps | Expected |
 |---|---|---|
 | `renders a password input and a submit button` | Render component | Password `<input>` and submit `<button>` are in the DOM |
-| `shows an error message when the login API returns 401` | Stub reject, type wrong password, click submit | `"Invalid password"` text visible |
+| `shows an error message when the login API returns 401` | Stub reject, type wrong password, click submit | `"admin.invalidPassword"` text visible |
 | `navigates to /admin/dashboard after a successful login` | Stub resolve with token, click submit | `mockNavigate` called with `'/admin/dashboard'` |
 | `stores the token in localStorage after a successful login` | Same as above | `localStorage.getItem('adminToken') === 'admin-token'` |
 | `disables the submit button while the request is in flight` | Stub never-resolving promise, click submit | Button has `disabled` attribute |

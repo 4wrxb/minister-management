@@ -1,14 +1,13 @@
 # Test Suite Overview
 
-This project has three independent test layers, plus one Docker smoke workflow.
+This project has three independent test layers. Docker smoke checks and browser E2E run in a single workflow so the same built container is reused.
 The matrix below combines suite overview and CI wiring in one place.
 
 | Layer | Framework | Location | Speed | Needs Docker? | CI workflow | CI run |
 |---|---|---|---|---|---|---|
 | **Backend unit** | pytest + Flask test client | `tests/backend/` | ~seconds | No | `.github/workflows/backend-tests.yml` | `pytest tests/backend/` |
 | **Frontend unit** | Vitest + React Testing Library | `frontend/src/__tests__/` (plan in `tests/frontend/`) | ~seconds | No | `.github/workflows/frontend-tests.yml` | `npm run lint` + `npm test` |
-| **E2E integration** | Playwright (Chromium) | `tests/e2e/` | ~1–3 min | **Yes** | `.github/workflows/e2e-tests.yml` | Docker build + Playwright browser flows |
-| **Container smoke** | curl + container log checks | `.github/workflows/docker-integration.yml` | ~1–3 min | **Yes** | `.github/workflows/docker-integration.yml` | Docker build/startup + health/static/log checks |
+| **Container integration** | Docker BuildKit + smoke checks + Playwright | `tests/e2e/` + `.github/workflows/docker-integration.yml` | ~2–6 min | **Yes** | `.github/workflows/docker-integration.yml` | Build once (GHA cache), smoke checks, then Playwright against same container |
 
 ---
 
