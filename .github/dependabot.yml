@@ -1,0 +1,57 @@
+version: 2
+updates:
+  # npm dependencies
+  - package-ecosystem: npm
+    directory: "/frontend"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "4wrxb"
+    allow:
+      - dependency-type: "all"
+    ignore:
+      # Ignore semver-major updates that would require code changes
+      - dependency-name: "react"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  # pip dependencies
+  - package-ecosystem: pip
+    directory: "/backend"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:15"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "4wrxb"
+    allow:
+      - dependency-type: "all"
+    ignore:
+      # Ignore semver-major updates that might break compatibility
+      - dependency-name: "flask"
+        update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "03:30"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "4wrxb"
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"

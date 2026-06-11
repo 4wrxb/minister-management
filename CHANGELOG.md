@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Comprehensive maintenance and security workflows**:
+  - **Dependabot auto-updates** (`.github/dependabot.yml`): Weekly automated PRs for npm, pip, and GitHub Actions dependencies. Semver-major updates for React, TypeScript, and Flask are ignored by Dependabot and require manual review to upgrade.
+  - **Nightly security scanning** (`.github/workflows/security-scan.yml`): CodeQL static analysis, Safety vulnerability checks, and npm audit. Non-blocking, informational results. Scheduled for 02:00 UTC daily.
+  - **Daily maintenance checks** were evaluated and intentionally removed because they overlapped with Dependabot coverage or lacked a low-noise path to become a useful gating signal.
+  - **Documentation guide** (`.github/MAINTENANCE.md`): Complete reference for workflow strategy, configuration, and troubleshooting.
+
 ### Changed
+- **Workflow optimization to eliminate duplication and improve feedback speed**:
+  - `backend-tests.yml`: Added fast Python syntax check (1s) before pytest to fail early on import/syntax errors.
+  - `frontend-tests.yml`: Added fast TypeScript type-check (10-30s) before linting to fail early on type errors.
+  - `security-scan.yml`: Moved from PR-blocking to nightly schedule to save GitHub runner resources while maintaining security coverage.
+  - Removed redundant `validate-build.yml` workflow; Docker integration test is now the single source of truth for build validation.
+  - New PR feedback timeline: <2 min for syntax/type checks, ~5 min for unit tests, ~25 min for full Docker integration test. Total: ~30 min.
 - Copilot/Claude guidance now requires future changes to finish the related user-facing docs, internal docs/changelog, and the best-fit unit or Playwright E2E tests before the work is considered complete.
 - `claude.md` remains the detailed project primer, while `.github/copilot-instructions.md` is the repo-level source of truth for validation and completion rules.
 

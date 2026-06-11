@@ -27,6 +27,11 @@ jobs:
             -r backend/requirements.txt \
             -r tests/backend/requirements.txt
 
+      - name: Check Python syntax
+        run: |
+          python -m compileall -q backend/
+          echo "✓ Python syntax check passed"
+
       - name: Run tests
         run: pytest tests/backend/ -v --tb=short
 
