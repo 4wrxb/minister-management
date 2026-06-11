@@ -8,11 +8,12 @@ This guide covers several deployment options, from simplest to most production-r
 2. [Option 2: Docker / Docker Compose](#option-2-docker--docker-compose)
 3. [Option 3: Google Cloud Run](#option-3-google-cloud-run)
 4. [Option 4: Azure App Service + Cloudflare Tunnel sidecar](#option-4-azure-app-service--cloudflare-tunnel-sidecar)
-5. [Option 5: Other Cloud Platforms](#option-5-other-cloud-platforms)
-6. [Putting Cloudflare in Front of Any Deployment](#putting-cloudflare-in-front-of-any-deployment)
-7. [Environment Variables](#environment-variables)
-8. [Backup & Restore](#backup--restore)
-9. [Monitoring & Troubleshooting](#monitoring--troubleshooting)
+5. [Option 5: Azure Container Apps (Automated)](#option-5-azure-container-apps-automated)
+6. [Option 6: Other Cloud Platforms](#option-6-other-cloud-platforms)
+7. [Putting Cloudflare in Front of Any Deployment](#putting-cloudflare-in-front-of-any-deployment)
+8. [Environment Variables](#environment-variables)
+9. [Backup & Restore](#backup--restore)
+10. [Monitoring & Troubleshooting](#monitoring--troubleshooting)
 
 ---
 
@@ -581,7 +582,254 @@ az webapp restart -g $RG -n $APP
 
 ---
 
-## Option 5: Other Cloud Platforms
+## Option 5: Azure Container Apps (Automated)
+
+This option deploys the app to **Azure Container Apps** using a **GitHub Actions workflow** with **Bicep infrastructure-as-code**, offering automated staging→production deployments, database backup/restore, and health-check-based rollback.
+
+### Architecture
+
+```
+GitHub Actions Workflow (config-driven)
+    ├─ Validate Bicep & run tests
+    ├─ Build & push image to GHCR
+    ├─ Bootstrap resources (if needed)
+    ├─ Deploy to staging
+    │   ├─ Backup database
+    │   ├─ Deploy Container App
+    │   ├─ Health check (5 min timeout)
+    │   └─ E2E tests
+    ├─ Manual approval gate
+    └─ Deploy to production
+        ├─ Backup database
+        ├─ Deploy Container App
+        ├─ Health check & auto-rollback
+        └─ Post-deployment validation
+```
+
+This pattern is ideal for small-scale apps (<1000 users/day) that need:
+
+- ✅ **Staged rollout** (staging → prod with approval)
+- ✅ **Automated checks** (Bicep validation, test suite, E2E tests, health probes)
+- ✅ **Database safety** (backup before each deploy, auto-rollback on failure)
+- ✅ **Infrastructure as code** (repeatable, version-controlled deployments)
+- ✅ **Zero-downtime updates** (managed identity, container probes, liveness/readiness)
+
+### Prerequisites
+
+- Azure subscription
+- GitHub repository with Actions enabled
+- `az` CLI (authenticated to Azure)
+- Docker (for local image builds)
+
+### Step 1: Set Up Azure Service Principal
+
+Create a service principal for GitHub Actions:
+
+```bash
+az ad sp create-for-rbac \
+  --name "minister-deployment" \
+  --role Contributor \
+  --scopes /subscriptions/<SUBSCRIPTION_ID>
+```
+
+Copy the JSON output and add to GitHub repo secrets as `AZURE_CREDENTIALS`.
+
+### Step 2: Configure GitHub Secrets
+
+In your GitHub repo, add these secrets (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|--------|-------|
+| `AZURE_CREDENTIALS` | Service principal JSON (from Step 1) |
+| `SECRET_KEY` | Random 64-char hex: `python -c "import secrets; print(secrets.token_hex(32))"` |
+| `ADMIN_PASSWORD` | Admin login password (change from default) |
+| `MINISTER_PASSWORD` | Minister login password (change from default) |
+| `URL_PREFIX` | *(optional)* Sub-path, e.g. `/ministry` |
+
+### Step 3: Trigger Deployment via GitHub Actions
+
+1. Go to **Actions** tab in your repo
+2. Select **Deploy to Azure Container Apps** workflow
+3. Click **Run workflow**
+4. Fill in:
+   - **Environment:** `staging`
+   - **Action:** `deploy`
+   - **Skip tests:** `false` (unless emergency)
+5. Click **Run workflow**
+
+The workflow will:
+
+1. ✓ Validate Bicep templates
+2. ✓ Run test suite (docker-integration, frontend, backend, E2E)
+3. ✓ Build and push Docker image to GitHub Container Registry
+4. ✓ Bootstrap Azure resources (first time only):
+   - Create resource group
+   - Create storage account + file share (SQLite persistence)
+   - Create Container Apps environment
+   - Deploy Container App
+5. ✓ Deploy to staging, run health checks and smoke tests
+6. ✓ Wait for manual approval (if production)
+7. ✓ Deploy to production, auto-rollback if health check fails
+
+### Workflow Inputs Reference
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `environment` | `staging` | `staging` or `production` |
+| `action` | `deploy` | `deploy`, `rollback`, or `destroy` |
+| `force_bootstrap` | `false` | Force resource creation (even if RG exists) |
+| `skip_tests` | `false` | Skip test suite (emergency use only) |
+| `skip_staging` | `false` | Deploy directly to prod (requires approval) |
+| `image_tag` | `latest` | Container image tag (e.g. `v1.4.0`, git SHA) |
+
+### Monitoring Deployment
+
+```bash
+# Stream workflow logs
+gh run watch <run-id>
+
+# Check Container App status
+az containerapp show \
+  --resource-group minister-rg-staging \
+  --name minister-app-staging
+
+# Stream Container App logs
+az containerapp logs show \
+  --resource-group minister-rg-staging \
+  --name minister-app-staging \
+  --follow
+```
+
+### Environment Variables in Container App
+
+The Bicep templates automatically set:
+
+| Variable | Value |
+|----------|-------|
+| `FLASK_ENV` | `production` |
+| `DATABASE_PATH` | `/data/minister.db` |
+| `SQLITE_VFS` | `unix-dotfile` (required for Azure Files) |
+| `PORT` | `8080` |
+| `URL_PREFIX` | From GitHub secret (if set) |
+| `SECRET_KEY` | From GitHub secret |
+| `ADMIN_PASSWORD` | From GitHub secret |
+| `MINISTER_PASSWORD` | From GitHub secret |
+
+### Database Persistence
+
+- **Storage:** Azure Files (SMB file share)
+- **Path:** `/data/minister.db` inside container
+- **Quota:** 5 GB (configurable in Bicep parameters)
+- **VFS Mode:** `unix-dotfile` (required for SMB compatibility)
+- **Backup:** Automatic backup before each deployment (stored in blob storage)
+
+### Updating & Rollback
+
+**To update:**
+
+```bash
+# Trigger workflow with new image tag
+gh workflow run deploy-aca.yml \
+  -f environment=production \
+  -f action=deploy \
+  -f image_tag=v1.4.1
+```
+
+**To rollback:**
+
+```bash
+# Trigger workflow with rollback action
+gh workflow run deploy-aca.yml \
+  -f environment=production \
+  -f action=rollback
+```
+
+Or manually:
+
+```bash
+az containerapp revision list \
+  --resource-group minister-rg-production \
+  --name minister-app-production
+
+# Activate a previous revision
+az containerapp revision activate \
+  --resource-group minister-rg-production \
+  --name minister-app-production \
+  --revision <revision-name>
+```
+
+### Scaling
+
+The Container App auto-scales based on CPU:
+
+| Config | Staging | Production |
+|--------|---------|------------|
+| Min instances | 1 | 2 |
+| Max instances | 3 | 5 |
+| Scale trigger | CPU > 70% | CPU > 70% |
+
+Adjust in workflow:
+
+```yaml
+deploy-production:
+  # ... in az deployment group create ...
+  --parameters \
+    minInstances=2 \
+    maxInstances=5
+```
+
+### Troubleshooting
+
+**Bicep validation fails:**
+
+```bash
+bicep validate infra/main.bicep
+```
+
+**Tests fail:**
+
+```bash
+# Run tests locally
+docker compose up -d
+npm install && npm run lint  # frontend
+pytest backend/  # backend
+```
+
+**Deployment hangs:**
+
+```bash
+# Check Container App logs
+az containerapp logs show \
+  --resource-group minister-rg-staging \
+  --name minister-app-staging
+```
+
+**Health check fails:**
+
+```bash
+# Check if app is responding
+curl https://<container-app-fqdn>/health
+
+# Check database connectivity
+az containerapp exec \
+  --resource-group minister-rg-staging \
+  --name minister-app-staging \
+  -- ls -la /data/
+```
+
+**Database locked error:**
+
+Verify `SQLITE_VFS=unix-dotfile` and `journal_mode=DELETE` are set (both configured automatically by Bicep).
+
+### Documentation
+
+- **Workflow reference:** [.github/DEPLOYMENT_WORKFLOW.md](.github/DEPLOYMENT_WORKFLOW.md)
+- **Bicep guide:** [infra/README.md](infra/README.md)
+- **GitHub Actions:** [.github/workflows/deploy-aca.yml](.github/workflows/deploy-aca.yml)
+
+---
+
+## Option 6: Other Cloud Platforms
 
 The app runs anywhere that supports Docker and persistent filesystem storage for SQLite.
 
