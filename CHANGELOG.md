@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Copilot/Claude guidance now requires future changes to finish the related user-facing docs, internal docs/changelog, and the best-fit unit or Playwright E2E tests before the work is considered complete.
+- `claude.md` remains the detailed project primer, while `.github/copilot-instructions.md` is the repo-level source of truth for validation and completion rules.
+
 ## [1.4.0] — 2026-06-11
 
 ### Added
