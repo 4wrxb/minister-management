@@ -337,6 +337,7 @@ jobs:
           
           az deployment group create \
             --resource-group "$RG" \
+            --name main-deployment \
             --template-file ${{ env.BICEP_DIR }}/main.bicep \
             --parameters \
               environmentName=staging \
@@ -452,6 +453,7 @@ jobs:
           
           az deployment group create \
             --resource-group "$RG" \
+            --name main-deployment \
             --template-file ${{ env.BICEP_DIR }}/main.bicep \
             --parameters \
               environmentName=production \
