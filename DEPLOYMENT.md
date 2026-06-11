@@ -669,7 +669,6 @@ In your GitHub repo, add these secrets (Settings → Secrets and variables → A
 4. Fill in:
    - **Environment:** `staging`
    - **Action:** `deploy`
-   - **Skip tests:** `false` (unless emergency)
 5. Click **Run workflow**
 
 The workflow will:
@@ -693,7 +692,7 @@ The workflow will:
 | `action` | `deploy` | `deploy`, `rollback`, or `destroy` |
 | `force_bootstrap` | `false` | Force resource creation (even if RG exists) |
 | `skip_staging` | `false` | Deploy directly to prod (requires approval) |
-| `image_tag` | `latest` | Container image tag (e.g. `v1.4.0`, git SHA) |
+| `image_tag` | `latest` | Alias tag pushed to GHCR alongside the commit-SHA tag (e.g. `v1.4.0`). The deploy itself always pins to `:<github.sha>` regardless of this value, so changing it won't trigger a new revision on its own — it just controls which human-friendly tag also points at the new image. |
 
 ### Monitoring Deployment
 
@@ -740,13 +739,16 @@ The Bicep templates automatically set:
 
 **To update:**
 
+Push the new commit to `main` (via PR) and dispatch the workflow against it:
+
 ```bash
-# Trigger workflow with new image tag
+# After your change is merged to main:
 gh workflow run deploy-aca.yml \
   -f environment=production \
-  -f action=deploy \
-  -f image_tag=v1.4.1
+  -f action=deploy
 ```
+
+The deploy always pins to `:<github.sha>`, so each commit on `main` produces a unique image reference, Azure Container Apps sees a change, and a new revision is cut. Re-dispatching against the *same* `main` SHA is a no-op (intentional — re-deploys without new code don't create empty revisions).
 
 **To rollback:**
 

@@ -8,15 +8,12 @@ The deployment workflow is **config-driven** via `workflow_dispatch` inputs, all
 
 - Choose environment (staging or production)
 - Select action (deploy, rollback, or destroy)
-- Skip tests for emergency hotfixes (requires approval)
 - Skip staging for direct production deployment (requires approval)
 
 ```
 Validate Config
     ↓
 Validate Bicep
-    ↓
-Run Test Suite
     ↓
 Build & Push Image  ─────────────────┐
     ↓                                │
@@ -64,7 +61,7 @@ gh workflow run deploy-aca.yml \
 | `action` | choice | `deploy` | `deploy`, `rollback`, or `destroy` |
 | `force_bootstrap` | boolean | `false` | Force resource creation even if RG exists |
 | `skip_staging` | boolean | `false` | Deploy directly to prod (requires approval) |
-| `image_tag` | string | `latest` | Container image tag (e.g., `v1.4.0`, git SHA) |
+| `image_tag` | string | `latest` | Alias tag pushed to GHCR alongside the commit-SHA tag. The deploy itself always pins to `:<github.sha>`, so this input doesn't control what's deployed — it just controls which human-friendly alias also points at the new image. |
 
 ## Job Descriptions
 
@@ -73,12 +70,12 @@ gh workflow run deploy-aca.yml \
 **Purpose:** Validate workflow inputs and compute derived values.
 
 **Outputs:**
-- `image-uri` — Full container image URI for deployment
+- `image-uri` — Full container image URI for the **alias tag** (e.g. `ghcr.io/<owner>/minister-management:latest`). Used by `build-image` to push the alias alongside the SHA-pinned tag. The deploy steps don't use this — they pin to `:<github.sha>` directly. See [`build-image`](#3-build-image) below.
 - `resource-group` — Azure resource group name
 
 **Behavior:**
 - Verifies environment is `staging` or `production`
-- Constructs image URI: `ghcr.io/<owner>/minister-management:latest`
+- Constructs image URI: `ghcr.io/<owner>/minister-management:<image_tag>` (e.g. `:latest`)
 - Constructs RG name: `minister-rg-<environment>`
 
 ---
@@ -101,18 +98,20 @@ gh workflow run deploy-aca.yml \
 **Purpose:** Build and push container image to registry.
 
 **Conditions:**
-- Runs after `validate-bicep` succeeds.
+- Runs after `validate-bicep` succeeds. (Also needs `validate-config` so it can read the `image-uri` output for the alias tag.)
 
 > **Why no separate test job here?** `docker-integration.yml` (smoke + Playwright E2E + lint + pytest + vitest) runs on every push to `main` as required checks. Because `deploy-aca.yml` is dispatched manually from `main`, the same commit has already had its full test suite go green. Re-running it here would just duplicate ~5 minutes of work and another failure surface. If you need to gate deployment on a specific commit's check status, look at the run for that commit under the Actions tab before dispatching.
 
 **Steps:**
 1. Log in to GitHub Container Registry (GHCR)
 2. Build image using existing Dockerfile
-3. Tag with:
-   - `image_tag` parameter (e.g., `latest`)
-   - Git commit SHA for traceability
+3. Tag with both:
+   - `:<image_tag>` — the operator-supplied alias (default `latest`), for human inspection on the Packages tab
+   - `:<github.sha>` — commit-pinned tag; **this is the tag the deploy actually uses**
 4. Push to GHCR
 5. Output image digest for audit trail
+
+**Permissions:** Adds `contents: read` + `packages: write` at the job level. The repo's `default_workflow_permissions` is `read` on many GitHub accounts/orgs, which lets the workflow pull but not push to GHCR; this per-job block grants only the elevation `build-image` needs while keeping every other job at the default. Without this block the push fails with the misleading "installation not allowed to Create organization package" error.
 
 **Outputs:**
 - `image-digest` — SHA256 digest of pushed image
@@ -120,7 +119,7 @@ gh workflow run deploy-aca.yml \
 
 ---
 
-### 5. `verify-package-visibility`
+### 4. `verify-package-visibility`
 
 **Purpose:** Fail fast if the GHCR package is not pullable by Azure Container Apps.
 
@@ -143,7 +142,7 @@ gh workflow run deploy-aca.yml \
 
 ---
 
-### 6. `bootstrap`
+### 5. `bootstrap`
 
 **Purpose:** Create Azure resource group and resources if they don't exist (idempotent).
 
@@ -163,7 +162,7 @@ gh workflow run deploy-aca.yml \
 
 ---
 
-### 7. `deploy-staging`
+### 6. `deploy-staging`
 
 **Purpose:** Deploy to staging environment with health checks and smoke tests.
 
@@ -173,7 +172,8 @@ gh workflow run deploy-aca.yml \
 
 **Steps:**
 1. Backup current database from Azure Files
-2. Deploy via Bicep:
+2. Deploy via Bicep (named `main-deployment` so the post-deploy `az deployment group show` query finds it):
+   - Pass `containerImage=ghcr.io/<owner>/minister-management:<github.sha>` — **pinned to the commit SHA, not the operator-supplied `image_tag`**, so each commit produces a unique image reference and ACA cuts a new revision. Re-dispatching against the same SHA is a no-op.
    - Create/update Container App
    - Mount Azure Files for SQLite
    - Set environment variables and secrets
@@ -194,7 +194,7 @@ gh workflow run deploy-aca.yml \
 
 ---
 
-### 8. `approval-gate`
+### 7. `approval-gate`
 
 **Purpose:** Require manual approval before production deployment.
 
@@ -210,7 +210,7 @@ gh workflow run deploy-aca.yml \
 
 ---
 
-### 9. `deploy-production`
+### 8. `deploy-production`
 
 **Purpose:** Deploy to production with rollback safety.
 
@@ -219,10 +219,11 @@ gh workflow run deploy-aca.yml \
 
 **Steps:**
 1. Backup current database
-2. Deploy via Bicep with production parameters:
+2. Deploy via Bicep with production parameters (also named `main-deployment`):
+   - Pass `containerImage=ghcr.io/<owner>/minister-management:<github.sha>` — same SHA-pinned scheme as staging
    - `minInstances=2` (always-on HA)
    - `maxInstances=5` (aggressive scaling available)
-   - Environment=production
+   - `environmentName=production`
 3. Wait for health check (5-minute timeout):
    - Poll `/health` every 15 seconds
    - If health check fails: Auto-rollback to previous revision
@@ -238,7 +239,7 @@ gh workflow run deploy-aca.yml \
 
 ---
 
-### 10. `post-deployment-checks`
+### 9. `post-deployment-checks`
 
 **Purpose:** Verify deployment, log metadata, and generate status report.
 
@@ -256,7 +257,7 @@ gh workflow run deploy-aca.yml \
 
 ---
 
-### 11. `deployment-status`
+### 10. `deployment-status`
 
 **Purpose:** Final status check and workflow conclusion.
 
@@ -376,8 +377,12 @@ gh run watch <run-id>
 | Scenario | Cause | Fix |
 |----------|-------|-----|
 | Bicep validation fails | Syntax error in `.bicep` files | Check `bicep build` / `bicep lint` output |
+| Bicep `Deployment template validation failed` on a parameter name | Parameter name in `infra/main.parameters.json` doesn't match `infra/main.bicep` | The two files share a contract — every key in the parameters file must be a `param` declared at the top of `main.bicep`. Add the param to Bicep or drop it from the parameters JSON, then re-run. |
 | Required CI checks red on `main` | smoke / E2E / lint failed on the merged commit | Fix the underlying problem on `main` before dispatching `deploy-aca.yml`. This workflow assumes the SHA being deployed is already known-good. |
+| `build-image` fails with `installation not allowed to Create organization package` | Repo's `default_workflow_permissions` is `read` and the per-job `packages: write` block was removed or is missing | Confirm `build-image` has its own `permissions:` block granting `contents: read` + `packages: write`. The workflow-level `permissions:` block alone is not enough on repos where the default is `read`; the elevation must be on the job that pushes. |
 | `verify-package-visibility` fails | GHCR package is private (default for new packages) | See [GHCR Pull Denied / Package Is Private](#ghcr-pull-denied--package-is-private) below |
+| `build-image` skipped / `validate-config` outputs missing | `build-image` job's `needs:` doesn't include `validate-config` | `build-image` must list `[validate-config, validate-bicep]` in `needs:` so it can both gate on Bicep validation and read the `image-uri` output. Removing `validate-config` from `needs:` makes the output evaluate to empty and the push targets a malformed URI. |
+| Post-deploy `az deployment group show` errors with `DeploymentNotFound` | Bicep was deployed without an explicit `--name`, so the deployment was auto-named after the parameters file | The workflow passes `--name main-deployment` on every `az deployment group create` so the post-deploy query is deterministic. If you add a new `az deployment group create` call, give it the same `--name`. |
 | Bootstrap fails | RG creation permission denied | Check `AZURE_CREDENTIALS` has Contributor role |
 | Deployment hangs | Container App slow to start | Check Container App logs in Azure portal |
 | Health check fails | App not responding on `/health` | Check backend logs, database connectivity |
