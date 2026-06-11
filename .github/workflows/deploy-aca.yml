@@ -335,6 +335,16 @@ jobs:
           RG="${{ needs.validate-config.outputs.resource-group }}"
           LOCATION="eastus"
           
+          # Deploy by commit SHA, not the operator-supplied image_tag
+          # (which is typically ':latest'). If we deployed by ':latest',
+          # Bicep would see the same containerImage value as last run and
+          # do nothing - ACA only creates a new revision when the image
+          # reference string actually changes. The ':<sha>' tag is also
+          # pushed by build-image and is what verify-package-visibility
+          # confirms is pullable.
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          echo "Deploying image: $IMAGE"
+
           az deployment group create \
             --resource-group "$RG" \
             --name main-deployment \
@@ -342,7 +352,7 @@ jobs:
             --parameters \
               environmentName=staging \
               location=$LOCATION \
-              containerImage="${{ needs.validate-config.outputs.image-uri }}" \
+              containerImage="$IMAGE" \
               secretKey="${{ secrets.SECRET_KEY }}" \
               adminPassword="${{ secrets.ADMIN_PASSWORD }}" \
               ministerPassword="${{ secrets.MINISTER_PASSWORD }}" \
@@ -451,6 +461,10 @@ jobs:
           RG="${{ needs.validate-config.outputs.resource-group }}"
           LOCATION="eastus"
           
+          # Deploy by commit SHA. See deploy-staging for the rationale.
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          echo "Deploying image: $IMAGE"
+
           az deployment group create \
             --resource-group "$RG" \
             --name main-deployment \
@@ -458,7 +472,7 @@ jobs:
             --parameters \
               environmentName=production \
               location=$LOCATION \
-              containerImage="${{ needs.validate-config.outputs.image-uri }}" \
+              containerImage="$IMAGE" \
               secretKey="${{ secrets.SECRET_KEY }}" \
               adminPassword="${{ secrets.ADMIN_PASSWORD }}" \
               ministerPassword="${{ secrets.MINISTER_PASSWORD }}" \
