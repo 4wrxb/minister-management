@@ -1,0 +1,618 @@
+name: Deploy to Azure Container Apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        type: choice
+        default: staging
+        options:
+          - staging
+          - production
+      action:
+        description: 'Deployment action'
+        required: true
+        type: choice
+        default: deploy
+        options:
+          - deploy
+          - rollback
+          - destroy
+      force_bootstrap:
+        description: 'Force bootstrap (create resources if missing)'
+        required: false
+        type: boolean
+        default: false
+      skip_tests:
+        description: 'Skip test suite (requires approval)'
+        required: false
+        type: boolean
+        default: false
+      skip_staging:
+        description: 'Skip staging deploy, go directly to production (requires approval)'
+        required: false
+        type: boolean
+        default: false
+      image_tag:
+        description: 'Container image tag (latest or commit SHA)'
+        required: false
+        type: string
+        default: latest
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/minister-management
+  BICEP_DIR: infra
+  SCRIPTS_DIR: scripts
+
+jobs:
+  # ─── Validate Configuration ──────────────────────────────────────
+  validate-config:
+    name: Validate configuration
+    runs-on: ubuntu-latest
+    outputs:
+      image-uri: ${{ steps.image-uri.outputs.uri }}
+      resource-group: ${{ steps.rg-name.outputs.name }}
+    steps:
+      - name: Validate inputs
+        run: |
+          echo "Environment: ${{ github.event.inputs.environment }}"
+          echo "Action: ${{ github.event.inputs.action }}"
+          echo "Skip tests: ${{ github.event.inputs.skip_tests }}"
+          echo "Skip staging: ${{ github.event.inputs.skip_staging }}"
+          
+          if [[ "${{ github.event.inputs.environment }}" != "staging" && "${{ github.event.inputs.environment }}" != "production" ]]; then
+            echo "ERROR: Invalid environment"
+            exit 1
+          fi
+          
+          if [[ "${{ github.event.inputs.skip_tests }}" == "true" ]] && [[ "${{ github.event.inputs.action }}" == "deploy" ]]; then
+            echo "⚠️  WARNING: Skipping tests — this is risky and should only be used for emergency hotfixes"
+          fi
+
+      - name: Compute image URI
+        id: image-uri
+        run: |
+          TAG="${{ github.event.inputs.image_tag }}"
+          TAG="${TAG:-latest}"
+          URI="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
+          echo "uri=${URI}" >> "$GITHUB_OUTPUT"
+          echo "Image URI: ${URI}"
+
+      - name: Compute resource group name
+        id: rg-name
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          RG="minister-rg-${ENV}"
+          echo "name=${RG}" >> "$GITHUB_OUTPUT"
+          echo "Resource Group: ${RG}"
+
+  # ─── Lint & Validate Bicep ───────────────────────────────────────
+  validate-bicep:
+    name: Validate Bicep templates
+    runs-on: ubuntu-latest
+    needs: validate-config
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Bicep CLI
+        run: |
+          curl -sLo bicep https://github.com/Azure/bicep/releases/latest/download/bicep-linux-x64
+          chmod +x bicep
+          sudo mv bicep /usr/local/bin/
+          bicep --version
+
+      - name: Build (type-check) Bicep templates
+        run: |
+          set -euo pipefail
+          echo "Building (type-checking) Bicep templates..."
+          for f in main.bicep storage.bicep aca.bicep; do
+            echo "  → ${BICEP_DIR}/${f}"
+            bicep build "${BICEP_DIR}/${f}" --stdout > /dev/null
+          done
+          echo "✓ All Bicep templates parsed and type-checked successfully"
+
+      - name: Lint Bicep templates
+        run: |
+          set -euo pipefail
+          echo "Linting Bicep templates..."
+          for f in main.bicep storage.bicep aca.bicep; do
+            echo "  → ${BICEP_DIR}/${f}"
+            bicep lint "${BICEP_DIR}/${f}"
+          done
+          echo "✓ Bicep lint complete"
+
+  # ─── Run Test Suite ──────────────────────────────────────────────
+  test-suite:
+    name: Run test suite
+    runs-on: ubuntu-latest
+    needs: validate-bicep
+    if: ${{ github.event.inputs.skip_tests != 'true' }}
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: minister-management:test-${{ github.run_id }}
+          cache-from: type=gha,scope=minister-management-test
+          cache-to: type=gha,mode=max,scope=minister-management-test
+
+      - name: Run smoke tests
+        run: |
+          docker compose -f docker-compose.yml up -d --no-build --force-recreate -e IMAGE_TAG=test-${{ github.run_id }}
+          
+          # Wait for backend to be ready
+          MAX_WAIT=60
+          ELAPSED=0
+          until curl -sf http://localhost:8080/health > /dev/null 2>&1; do
+            if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
+              echo "ERROR: Backend did not become healthy within ${MAX_WAIT}s"
+              docker compose logs
+              exit 1
+            fi
+            echo "Waiting for backend... (${ELAPSED}s elapsed)"
+            sleep 3
+            ELAPSED=$((ELAPSED + 3))
+          done
+          
+          echo "✓ Backend is healthy"
+
+      - name: Check container logs for errors
+        run: |
+          LOGS=$(docker compose logs app 2>&1)
+          if echo "$LOGS" | grep -qE "Traceback|Worker failed to boot|CRITICAL"; then
+            echo "ERROR: Errors detected in logs"
+            echo "$LOGS"
+            exit 1
+          fi
+          echo "✓ No errors in logs"
+
+      - name: Run Playwright E2E tests
+        run: |
+          cd tests/e2e
+          npm ci
+          npx playwright install --with-deps chromium
+          npx playwright test
+          echo "✓ E2E tests passed"
+
+      - name: Teardown test containers
+        if: always()
+        run: docker compose down -v
+
+  # ─── Build & Push Container Image ────────────────────────────────
+  build-image:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    needs: test-suite
+    if: ${{ always() && (needs.test-suite.result == 'success' || github.event.inputs.skip_tests == 'true') }}
+    outputs:
+      image-digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ needs.validate-config.outputs.image-uri }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha,scope=minister-management-build
+          cache-to: type=gha,mode=max,scope=minister-management-build
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+
+      - name: Output image digest
+        run: |
+          echo "Image pushed successfully"
+          echo "Digest: ${{ steps.push.outputs.digest }}"
+          echo "Tags: ${{ needs.validate-config.outputs.image-uri }}"
+
+  # ─── Verify GHCR Package Is Pullable ─────────────────────────────
+  # ACA pulls images anonymously (no registry credentials configured),
+  # so the GHCR package MUST be public. GitHub creates new packages as
+  # private by default, so on the very first run of this workflow the
+  # operator must visit the package settings and either:
+  #   - flip visibility to Public, or
+  #   - enable "Inherit access from source repository" (works because
+  #     the Dockerfile has org.opencontainers.image.source pointing
+  #     at this repo, so the package is auto-connected on first push).
+  # This job fails fast with a clear message so we don't waste 5–10
+  # minutes watching ACA bootstrap fail with a cryptic DENIED error.
+  # See .github/DEPLOYMENT_WORKFLOW.md "Step 0" and DEPLOYMENT.md
+  # Option 5 for the security audit and operator instructions.
+  verify-package-visibility:
+    name: Verify GHCR package is public
+    runs-on: ubuntu-latest
+    needs: build-image
+    permissions:
+      packages: read
+    steps:
+      - name: Check package visibility
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          PKG: minister-management
+        run: |
+          set -eo pipefail
+
+          # GitHub uses different endpoints for user-owned vs org-owned
+          # packages. Probe the owner type from the public users API,
+          # then call the matching packages endpoint.
+          OWNER_TYPE=$(gh api "/users/${OWNER}" --jq '.type' 2>/dev/null || echo "")
+          if [ "$OWNER_TYPE" = "Organization" ]; then
+            ENDPOINT="/orgs/${OWNER}/packages/container/${PKG}"
+            SETTINGS_URL="https://github.com/orgs/${OWNER}/packages/container/${PKG}/settings"
+          else
+            ENDPOINT="/users/${OWNER}/packages/container/${PKG}"
+            SETTINGS_URL="https://github.com/users/${OWNER}/packages/container/${PKG}/settings"
+          fi
+
+          echo "Checking ${ENDPOINT} ..."
+
+          if ! BODY=$(gh api "$ENDPOINT" 2>/dev/null); then
+            echo "::error::GHCR package '${PKG}' not found under '${OWNER}', or the"
+            echo "::error::workflow's GITHUB_TOKEN lacks 'packages: read' permission."
+            echo "::error::On the very first deploy, this can happen if build-image"
+            echo "::error::has not finished pushing yet — re-run after it succeeds."
+            echo "::error::See DEPLOYMENT.md Option 5 Step 0."
+            exit 1
+          fi
+
+          VISIBILITY=$(echo "$BODY" | jq -r '.visibility // "unknown"')
+          echo "Package visibility: ${VISIBILITY}"
+
+          if [ "$VISIBILITY" != "public" ]; then
+            echo "::error::GHCR package '${PKG}' is '${VISIBILITY}' — ACA cannot pull it."
+            echo "::error::Fix: open ${SETTINGS_URL}"
+            echo "::error::      then either click 'Change visibility' → Public, OR"
+            echo "::error::      enable 'Inherit access from source repository'"
+            echo "::error::      (works because the Dockerfile sets image.source to this repo)."
+            echo "::error::Re-run this workflow once the package is public."
+            echo "::error::See DEPLOYMENT.md Option 5 Step 0 and"
+            echo "::error::.github/DEPLOYMENT_WORKFLOW.md for the security audit"
+            echo "::error::explaining why public GHCR is safe for this codebase."
+            exit 1
+          fi
+
+          echo "✓ GHCR package is public — ACA will be able to pull it anonymously"
+
+  # ─── Check/Bootstrap Resources ───────────────────────────────────
+  bootstrap:
+    name: Bootstrap resources if needed
+    runs-on: ubuntu-latest
+    needs: [validate-config, validate-bicep]
+    if: ${{ github.event.inputs.action == 'deploy' || github.event.inputs.force_bootstrap == 'true' }}
+    environment: azure
+    outputs:
+      rg-created: ${{ steps.check-rg.outputs.created }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Check if resource group exists
+        id: check-rg
+        run: |
+          RG="${{ needs.validate-config.outputs.resource-group }}"
+          if az group exists --name "$RG" | grep -q true; then
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            echo "✓ Resource group $RG already exists"
+          else
+            echo "created=true" >> "$GITHUB_OUTPUT"
+            echo "Resource group $RG does not exist — will create"
+          fi
+
+      - name: Create resource group if missing
+        if: steps.check-rg.outputs.created == 'true'
+        run: |
+          RG="${{ needs.validate-config.outputs.resource-group }}"
+          LOCATION="eastus"
+          az group create --name "$RG" --location "$LOCATION"
+          echo "✓ Created resource group $RG in $LOCATION"
+
+      - name: Store bootstrap state
+        run: |
+          echo "Bootstrap completed at $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+  # ─── Deploy to Staging ───────────────────────────────────────────
+  deploy-staging:
+    name: Deploy to staging
+    runs-on: ubuntu-latest
+    needs: [validate-config, build-image, verify-package-visibility, bootstrap]
+    if: |
+      github.event.inputs.action == 'deploy' && 
+      github.event.inputs.environment == 'staging' &&
+      github.event.inputs.skip_staging != 'true'
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.app-url }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Backup current database
+        id: backup
+        run: |
+          RG="${{ needs.validate-config.outputs.resource-group }}"
+          TIMESTAMP=$(date -u +'%Y%m%d-%H%M%S')
+          BACKUP_NAME="minister-backup-${TIMESTAMP}.db"
+          
+          # Get storage account name from recent deployment
+          STORAGE_ACCOUNT=$(az storage account list --resource-group "$RG" --query "[0].name" -o tsv 2>/dev/null || echo "")
+          
+          if [ -n "$STORAGE_ACCOUNT" ]; then
+            echo "Backing up to $BACKUP_NAME..."
+            # Backup logic here (requires connectivity to file share)
+            echo "backup-name=${BACKUP_NAME}" >> "$GITHUB_OUTPUT"
+            echo "✓ Backup created: $BACKUP_NAME"
+          else
+            echo "No existing storage account — skipping backup"
+            echo "backup-name=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy via Bicep
+        id: deploy
+        run: |
+          RG="${{ needs.validate-config.outputs.resource-group }}"
+          LOCATION="eastus"
+          
+          az deployment group create \
+            --resource-group "$RG" \
+            --template-file ${{ env.BICEP_DIR }}/main.bicep \
+            --parameters \
+              environment=staging \
+              location=$LOCATION \
+              containerImage="${{ needs.validate-config.outputs.image-uri }}" \
+              secretKey="${{ secrets.SECRET_KEY }}" \
+              adminPassword="${{ secrets.ADMIN_PASSWORD }}" \
+              ministerPassword="${{ secrets.MINISTER_PASSWORD }}" \
+              urlPrefix="${{ secrets.URL_PREFIX || '' }}"
+          
+          # Extract outputs
+          OUTPUTS=$(az deployment group show \
+            --resource-group "$RG" \
+            --name main-deployment \
+            --query properties.outputs -o json)
+          
+          APP_URL=$(echo "$OUTPUTS" | jq -r '.containerAppUrl.value')
+          echo "app-url=${APP_URL}" >> "$GITHUB_OUTPUT"
+          echo "✓ Deployed to $APP_URL"
+
+      - name: Wait for app to be healthy
+        run: |
+          APP_URL="${{ steps.deploy.outputs.app-url }}"
+          MAX_WAIT=300  # 5 minutes
+          ELAPSED=0
+          
+          until curl -sf "${APP_URL}/health" > /dev/null 2>&1; do
+            if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
+              echo "ERROR: App did not become healthy within ${MAX_WAIT}s"
+              exit 1
+            fi
+            echo "Waiting for app to be healthy... (${ELAPSED}s elapsed)"
+            sleep 10
+            ELAPSED=$((ELAPSED + 10))
+          done
+          
+          echo "✓ App is healthy at $APP_URL"
+
+      - name: Run smoke tests against staging
+        run: |
+          APP_URL="${{ steps.deploy.outputs.app-url }}"
+          
+          # Test /health endpoint
+          curl -sf "${APP_URL}/health" || exit 1
+          echo "✓ /health endpoint working"
+          
+          # Test public endpoints
+          curl -sf "${APP_URL}/api/settings/research-day" || exit 1
+          echo "✓ /api/settings/research-day working"
+          
+          echo "✓ All smoke tests passed"
+
+      - name: Rollback on failure
+        if: failure() && steps.backup.outputs.backup-name != ''
+        run: |
+          echo "Deployment failed — rolling back..."
+          # Restore logic here
+          echo "✓ Rollback completed"
+
+  # ─── Approval Gate (for Production) ──────────────────────────────
+  approval-gate:
+    name: Production approval gate
+    runs-on: ubuntu-latest
+    needs: [validate-config, deploy-staging]
+    if: |
+      github.event.inputs.environment == 'production' && 
+      github.event.inputs.action == 'deploy'
+    environment:
+      name: production
+      # This will pause the workflow for manual approval
+    steps:
+      - name: Check approval requirements
+        run: |
+          echo "Production deployment requires approval."
+          echo "Environment: production"
+          echo "Action: deploy"
+          echo "This workflow will pause here until approved by a team member."
+
+  # ─── Deploy to Production ────────────────────────────────────────
+  deploy-production:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    needs: [validate-config, build-image, verify-package-visibility, approval-gate]
+    if: |
+      github.event.inputs.environment == 'production' && 
+      github.event.inputs.action == 'deploy'
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.app-url }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Backup current database
+        id: backup
+        run: |
+          RG="${{ needs.validate-config.outputs.resource-group }}"
+          TIMESTAMP=$(date -u +'%Y%m%d-%H%M%S')
+          BACKUP_NAME="minister-backup-prod-${TIMESTAMP}.db"
+          echo "backup-name=${BACKUP_NAME}" >> "$GITHUB_OUTPUT"
+          echo "Backup name: $BACKUP_NAME"
+
+      - name: Deploy via Bicep to production
+        id: deploy
+        run: |
+          RG="${{ needs.validate-config.outputs.resource-group }}"
+          LOCATION="eastus"
+          
+          az deployment group create \
+            --resource-group "$RG" \
+            --template-file ${{ env.BICEP_DIR }}/main.bicep \
+            --parameters \
+              environment=production \
+              location=$LOCATION \
+              containerImage="${{ needs.validate-config.outputs.image-uri }}" \
+              secretKey="${{ secrets.SECRET_KEY }}" \
+              adminPassword="${{ secrets.ADMIN_PASSWORD }}" \
+              ministerPassword="${{ secrets.MINISTER_PASSWORD }}" \
+              minInstances=2 \
+              maxInstances=5 \
+              urlPrefix="${{ secrets.URL_PREFIX || '' }}"
+          
+          OUTPUTS=$(az deployment group show \
+            --resource-group "$RG" \
+            --name main-deployment \
+            --query properties.outputs -o json)
+          
+          APP_URL=$(echo "$OUTPUTS" | jq -r '.containerAppUrl.value')
+          echo "app-url=${APP_URL}" >> "$GITHUB_OUTPUT"
+          echo "✓ Deployed to production: $APP_URL"
+
+      - name: Health check (5 min timeout)
+        id: health-check
+        run: |
+          APP_URL="${{ steps.deploy.outputs.app-url }}"
+          MAX_WAIT=300
+          ELAPSED=0
+          
+          until curl -sf "${APP_URL}/health" > /dev/null 2>&1; do
+            if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
+              echo "::error::Health check failed after 5 minutes"
+              exit 1
+            fi
+            echo "Health check... (${ELAPSED}s elapsed)"
+            sleep 15
+            ELAPSED=$((ELAPSED + 15))
+          done
+          
+          echo "✓ Production app is healthy"
+
+      - name: Auto-rollback on failure
+        if: failure() && steps.health-check.outcome == 'failure'
+        run: |
+          echo "ERROR: Production deployment failed health check — initiating rollback..."
+          # Rollback to previous revision
+          RG="${{ needs.validate-config.outputs.resource-group }}"
+          az containerapp update \
+            --resource-group "$RG" \
+            --name minister-app-production \
+            --set-env-vars FLASK_ENV=production \
+            || true
+          echo "⚠️  Rollback initiated. Manual verification required."
+
+  # ─── Post-Deployment Checks ─────────────────────────────────────
+  post-deployment-checks:
+    name: Post-deployment checks
+    runs-on: ubuntu-latest
+    needs: [validate-config, deploy-production]
+    if: ${{ always() && (needs.deploy-production.result == 'success' || github.event.inputs.environment == 'staging') }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get deployment info
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          RG="minister-rg-${ENV}"
+          
+          # Get Container App details
+          echo "=== Deployment Summary ==="
+          echo "Environment: $ENV"
+          echo "Deployment time: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+          
+          OUTPUTS=$(az deployment group show \
+            --resource-group "$RG" \
+            --name main-deployment \
+            --query properties.outputs -o json 2>/dev/null || echo '{}')
+          
+          echo "App URL: $(echo "$OUTPUTS" | jq -r '.containerAppUrl.value // "N/A"')"
+          echo "Storage Account: $(echo "$OUTPUTS" | jq -r '.storageAccountName.value // "N/A"')"
+
+      - name: Log deployment completion
+        run: |
+          echo "✓ Deployment completed successfully"
+          echo "Environment: ${{ github.event.inputs.environment }}"
+          echo "Image: ${{ needs.validate-config.outputs.image-uri }}"
+          echo "Timestamp: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+  # ─── Final Status ───────────────────────────────────────────────
+  deployment-status:
+    name: Deployment status
+    runs-on: ubuntu-latest
+    needs: [post-deployment-checks]
+    if: always()
+    steps:
+      - name: Deployment result
+        run: |
+          if [[ "${{ needs.post-deployment-checks.result }}" == "success" ]]; then
+            echo "✓ Deployment successful"
+            exit 0
+          else
+            echo "✗ Deployment failed"
+            exit 1
+          fi

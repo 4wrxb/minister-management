@@ -27,8 +27,11 @@ npm-debug.log*
 
 # Documentation
 README.md
-.env
-.env.local
+
+# Environment files (defense-in-depth — none should exist in the
+# build context anyway, but make sure .env, .env.local, .env.production,
+# .env.staging, etc. are never accidentally COPYed into the image)
+.env*
 
 # OS
 .DS_Store

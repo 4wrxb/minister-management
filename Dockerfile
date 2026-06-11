@@ -35,6 +35,16 @@ ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
 ENV DATABASE_PATH=/data/minister.db
 
+# OCI image metadata
+# org.opencontainers.image.source connects the GHCR package to this
+# repository on first push, so the package surfaces on the repo's
+# Packages tab and exposes the "Inherit access from source repository"
+# visibility option. Required for the ACA deploy workflow to pass its
+# verify-package-visibility preflight without a registry PAT.
+LABEL org.opencontainers.image.source="https://github.com/4wrxb/minister-management" \
+      org.opencontainers.image.description="Whiteout Survival ministry-position scheduling system" \
+      org.opencontainers.image.title="minister-management"
+
 # Expose port
 EXPOSE 8080
 
