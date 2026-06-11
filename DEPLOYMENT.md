@@ -675,16 +675,15 @@ In your GitHub repo, add these secrets (Settings → Secrets and variables → A
 The workflow will:
 
 1. ✓ Validate Bicep templates
-2. ✓ Run test suite (docker-integration, frontend, backend, E2E)
-3. ✓ Build and push Docker image to GitHub Container Registry
-4. ✓ Bootstrap Azure resources (first time only):
+2. ✓ Build and push Docker image to GitHub Container Registry (smoke + E2E + lint + pytest + vitest are run by `docker-integration.yml` on every push to `main`, so the same SHA being deployed has already passed them — this workflow doesn't repeat them)
+3. ✓ Bootstrap Azure resources (first time only):
    - Create resource group
    - Create storage account + file share (SQLite persistence)
    - Create Container Apps environment
    - Deploy Container App
-5. ✓ Deploy to staging, run health checks and smoke tests
-6. ✓ Wait for manual approval (if production)
-7. ✓ Deploy to production, auto-rollback if health check fails
+4. ✓ Deploy to staging, run health checks and smoke tests
+5. ✓ Wait for manual approval (if production)
+6. ✓ Deploy to production, auto-rollback if health check fails
 
 ### Workflow Inputs Reference
 
@@ -693,7 +692,6 @@ The workflow will:
 | `environment` | `staging` | `staging` or `production` |
 | `action` | `deploy` | `deploy`, `rollback`, or `destroy` |
 | `force_bootstrap` | `false` | Force resource creation (even if RG exists) |
-| `skip_tests` | `false` | Skip test suite (emergency use only) |
 | `skip_staging` | `false` | Deploy directly to prod (requires approval) |
 | `image_tag` | `latest` | Container image tag (e.g. `v1.4.0`, git SHA) |
 

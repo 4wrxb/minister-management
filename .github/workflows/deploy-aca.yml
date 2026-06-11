@@ -25,11 +25,6 @@ on:
         required: false
         type: boolean
         default: false
-      skip_tests:
-        description: 'Skip test suite (requires approval)'
-        required: false
-        type: boolean
-        default: false
       skip_staging:
         description: 'Skip staging deploy, go directly to production (requires approval)'
         required: false
@@ -64,16 +59,11 @@ jobs:
         run: |
           echo "Environment: ${{ github.event.inputs.environment }}"
           echo "Action: ${{ github.event.inputs.action }}"
-          echo "Skip tests: ${{ github.event.inputs.skip_tests }}"
           echo "Skip staging: ${{ github.event.inputs.skip_staging }}"
-          
+
           if [[ "${{ github.event.inputs.environment }}" != "staging" && "${{ github.event.inputs.environment }}" != "production" ]]; then
             echo "ERROR: Invalid environment"
             exit 1
-          fi
-          
-          if [[ "${{ github.event.inputs.skip_tests }}" == "true" ]] && [[ "${{ github.event.inputs.action }}" == "deploy" ]]; then
-            echo "⚠️  WARNING: Skipping tests — this is risky and should only be used for emergency hotfixes"
           fi
 
       - name: Compute image URI
@@ -129,80 +119,17 @@ jobs:
           done
           echo "✓ Bicep lint complete"
 
-  # ─── Run Test Suite ──────────────────────────────────────────────
-  test-suite:
-    name: Run test suite
-    runs-on: ubuntu-latest
-    needs: validate-bicep
-    if: ${{ github.event.inputs.skip_tests != 'true' }}
-    timeout-minutes: 30
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          load: true
-          tags: minister-management:test-${{ github.run_id }}
-          cache-from: type=gha,scope=minister-management-test
-          cache-to: type=gha,mode=max,scope=minister-management-test
-
-      - name: Run smoke tests
-        run: |
-          # Build via compose so we exercise the same image the deploy-aca
-          # build-image job will push. The earlier docker/build-push-action
-          # step warms the local layer cache, so this is fast.
-          docker compose -f docker-compose.yml up -d --build --force-recreate
-
-          # Wait for backend to be ready
-          MAX_WAIT=60
-          ELAPSED=0
-          until curl -sf http://localhost:8080/health > /dev/null 2>&1; do
-            if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
-              echo "ERROR: Backend did not become healthy within ${MAX_WAIT}s"
-              docker compose logs
-              exit 1
-            fi
-            echo "Waiting for backend... (${ELAPSED}s elapsed)"
-            sleep 3
-            ELAPSED=$((ELAPSED + 3))
-          done
-          
-          echo "✓ Backend is healthy"
-
-      - name: Check container logs for errors
-        run: |
-          LOGS=$(docker compose logs app 2>&1)
-          if echo "$LOGS" | grep -qE "Traceback|Worker failed to boot|CRITICAL"; then
-            echo "ERROR: Errors detected in logs"
-            echo "$LOGS"
-            exit 1
-          fi
-          echo "✓ No errors in logs"
-
-      - name: Run Playwright E2E tests
-        run: |
-          cd tests/e2e
-          npm ci
-          npx playwright install --with-deps chromium
-          npx playwright test
-          echo "✓ E2E tests passed"
-
-      - name: Teardown test containers
-        if: always()
-        run: docker compose down -v
-
   # ─── Build & Push Container Image ────────────────────────────────
+  #
+  # Note: this workflow intentionally does NOT re-run smoke / E2E tests.
+  # docker-integration.yml (smoke-and-e2e) runs on every push to main,
+  # so whenever this workflow is dispatched from main the same SHA has
+  # already had its full test suite pass. Running them a second time
+  # here would just duplicate work and add ~5 minutes per deploy.
   build-image:
     name: Build and push image
     runs-on: ubuntu-latest
-    needs: test-suite
-    if: ${{ always() && (needs.test-suite.result == 'success' || github.event.inputs.skip_tests == 'true') }}
+    needs: validate-bicep
     outputs:
       image-digest: ${{ steps.push.outputs.digest }}
     steps:

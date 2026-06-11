@@ -53,8 +53,7 @@ Bootstrap Resources (if needed)
 gh workflow run deploy-aca.yml \
   -f environment=staging \
   -f action=deploy \
-  -f force_bootstrap=false \
-  -f skip_tests=false
+  -f force_bootstrap=false
 ```
 
 ## Workflow Input Parameters
@@ -64,7 +63,6 @@ gh workflow run deploy-aca.yml \
 | `environment` | choice | `staging` | `staging` or `production` |
 | `action` | choice | `deploy` | `deploy`, `rollback`, or `destroy` |
 | `force_bootstrap` | boolean | `false` | Force resource creation even if RG exists |
-| `skip_tests` | boolean | `false` | Skip test suite (requires approval, emergency use only) |
 | `skip_staging` | boolean | `false` | Deploy directly to prod (requires approval) |
 | `image_tag` | string | `latest` | Container image tag (e.g., `v1.4.0`, git SHA) |
 
@@ -98,34 +96,14 @@ gh workflow run deploy-aca.yml \
 
 ---
 
-### 3. `test-suite`
-
-**Purpose:** Run backend tests, frontend tests, and E2E tests.
-
-**Conditions:**
-- Skipped if `skip_tests=true`
-- Runs docker-compose with test harness
-
-**Steps:**
-1. Build Docker image
-2. Start containers via docker-compose
-3. Wait for `/health` endpoint (60s timeout)
-4. Run Playwright E2E tests
-5. Check logs for errors/crashes
-6. Tear down containers
-
-**Timeout:** 30 minutes
-
-**Outputs:** Test results, Playwright report (on failure)
-
----
-
-### 4. `build-image`
+### 3. `build-image`
 
 **Purpose:** Build and push container image to registry.
 
 **Conditions:**
-- Only runs if `test-suite` passed (or `skip_tests=true`)
+- Runs after `validate-bicep` succeeds.
+
+> **Why no separate test job here?** `docker-integration.yml` (smoke + Playwright E2E + lint + pytest + vitest) runs on every push to `main` as required checks. Because `deploy-aca.yml` is dispatched manually from `main`, the same commit has already had its full test suite go green. Re-running it here would just duplicate ~5 minutes of work and another failure surface. If you need to gate deployment on a specific commit's check status, look at the run for that commit under the Actions tab before dispatching.
 
 **Steps:**
 1. Log in to GitHub Container Registry (GHCR)
@@ -300,18 +278,6 @@ gh workflow run deploy-aca.yml \
 | `environment=production`, `action=deploy` | `validate → build → bootstrap → approval-gate → deploy-production → checks` |
 | `environment=production`, `skip_staging=true` | Skip staging, go directly to production approval gate |
 
-### Skip Tests (Emergency Hotfix)
-
-```yaml
-if skip_tests=true:
-  ├─ Build and push image IMMEDIATELY (no test suite)
-  ├─ Log WARNING: "Skipping tests — risky"
-  └─ Proceed to deployment
-else:
-  ├─ Run full test suite
-  └─ If tests fail: stop, do not proceed
-```
-
 ### Rollback Logic
 
 **Automatic Rollback (Production Only):**
@@ -410,7 +376,7 @@ gh run watch <run-id>
 | Scenario | Cause | Fix |
 |----------|-------|-----|
 | Bicep validation fails | Syntax error in `.bicep` files | Check `bicep build` / `bicep lint` output |
-| Tests fail | Test suite errors | Fix code or `skip_tests=true` for hotfix |
+| Required CI checks red on `main` | smoke / E2E / lint failed on the merged commit | Fix the underlying problem on `main` before dispatching `deploy-aca.yml`. This workflow assumes the SHA being deployed is already known-good. |
 | `verify-package-visibility` fails | GHCR package is private (default for new packages) | See [GHCR Pull Denied / Package Is Private](#ghcr-pull-denied--package-is-private) below |
 | Bootstrap fails | RG creation permission denied | Check `AZURE_CREDENTIALS` has Contributor role |
 | Deployment hangs | Container App slow to start | Check Container App logs in Azure portal |
