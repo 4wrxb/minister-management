@@ -53,6 +53,8 @@ VALID_TOKENS = {'admin-token', 'minister-token'}
 def check_admin_auth():
     """Validate admin authentication. Returns None if valid, or error response tuple if invalid."""
     auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        auth_header = auth_header[len('Bearer '):]
     if not auth_header or auth_header not in VALID_TOKENS:
         return jsonify({'error': 'Unauthorized'}), 401
     return None

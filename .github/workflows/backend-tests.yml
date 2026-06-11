@@ -1,0 +1,35 @@
+name: Backend Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install \
+            -r backend/requirements.txt \
+            -r tests/backend/requirements.txt
+
+      - name: Run tests
+        run: pytest tests/backend/ -v --tb=short
+
+      - name: Clean up test DB
+        if: always()
+        run: rm -f tests/backend/.test_minister.db

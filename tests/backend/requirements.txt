@@ -1,0 +1,3 @@
+# Test-only dependencies — never included in the Docker image or backend/requirements.txt
+pytest>=8.0
+pytest-flask>=1.3

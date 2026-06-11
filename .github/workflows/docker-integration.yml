@@ -1,0 +1,184 @@
+name: Docker Smoke & E2E Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  smoke-and-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      BASE_URL: http://localhost:8080
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── Build (BuildKit cache) ───────────────────────────────────────────────
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve compose image name
+        id: image-meta
+        run: |
+          IMAGE_NAME=$(docker compose config --images | head -n 1)
+          if [ -z "$IMAGE_NAME" ]; then
+            echo "FAIL: Could not resolve built image name from docker compose config"
+            docker compose config --images
+            exit 1
+          fi
+          echo "image_name=$IMAGE_NAME" >> "$GITHUB_OUTPUT"
+          echo "Resolved image name: $IMAGE_NAME"
+
+      - name: Build Docker image (cache-enabled)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ${{ steps.image-meta.outputs.image_name }}
+          cache-from: type=gha,scope=minister-management-docker
+          cache-to: type=gha,mode=max,scope=minister-management-docker
+
+      - name: Check built image size
+        run: |
+          IMAGE_NAME="${{ steps.image-meta.outputs.image_name }}"
+
+          SIZE_BYTES=$(docker image inspect "$IMAGE_NAME" --format='{{.Size}}')
+          SIZE_MB=$(( (SIZE_BYTES + 1024 * 1024 - 1) / (1024 * 1024) ))
+          LIMIT_MB=200
+
+          echo "Built image: $IMAGE_NAME"
+          echo "Built image size: ${SIZE_MB} MB"
+          echo "Configured limit: ${LIMIT_MB} MB"
+
+          if [ "$SIZE_MB" -gt "$LIMIT_MB" ]; then
+            echo "FAIL: Docker image size ${SIZE_MB} MB exceeds limit ${LIMIT_MB} MB"
+            exit 1
+          fi
+
+          echo "PASS: Docker image size is within limit"
+
+      # ── Start container ──────────────────────────────────────────────────────
+
+      - name: Start container
+        run: |
+          docker compose up -d --no-build
+          echo "Container started, waiting for it to become healthy..."
+
+      - name: Wait for backend to be ready
+        run: |
+          MAX_WAIT=60
+          INTERVAL=3
+          ELAPSED=0
+          until curl -sf "$BASE_URL/health" > /dev/null 2>&1; do
+            if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
+              echo "ERROR: Backend did not become healthy within ${MAX_WAIT}s"
+              docker compose logs
+              exit 1
+            fi
+            echo "Waiting for backend... (${ELAPSED}s elapsed)"
+            sleep "$INTERVAL"
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+          echo "Backend is healthy after ${ELAPSED}s"
+
+      # ── Health & crash checks ────────────────────────────────────────────────
+
+      - name: Health endpoint returns healthy
+        run: |
+          RESPONSE=$(curl -sf "$BASE_URL/health")
+          echo "Response: $RESPONSE"
+          echo "$RESPONSE" | grep -q '"healthy"' || \
+            { echo "FAIL: /health did not return healthy status"; exit 1; }
+          echo "PASS: /health returned healthy"
+
+      - name: Check container logs for errors/crashes
+        run: |
+          LOGS=$(docker compose logs app 2>&1)
+          echo "=== Container logs ==="
+          echo "$LOGS"
+          echo "====================="
+
+          # Fail if Python traceback or gunicorn worker crash is detected
+          if echo "$LOGS" | grep -qE "Traceback \(most recent call last\)|Worker failed to boot|\[ERROR\].*Exception|CRITICAL"; then
+            echo "FAIL: Error or crash detected in container logs"
+            exit 1
+          fi
+          echo "PASS: No crashes or critical errors in logs"
+
+      # ── Frontend served by backend ───────────────────────────────────────────
+
+      - name: Root path serves the React app
+        run: |
+          STATUS=$(curl -o /dev/null -sw "%{http_code}" "$BASE_URL/")
+          echo "HTTP status: $STATUS"
+          [ "$STATUS" = "200" ] || { echo "FAIL: / returned $STATUS"; exit 1; }
+
+          # The bundled SPA should contain the Vite-injected script tag
+          BODY=$(curl -sf "$BASE_URL/")
+          echo "$BODY" | grep -qi "<script" || \
+            { echo "FAIL: index.html does not contain a <script> tag — frontend may not be bundled"; exit 1; }
+          echo "PASS: / serves the React SPA"
+
+      - name: SPA client-side routes are served (deep link fallback)
+        run: |
+          for ROUTE in /admin /submit /update; do
+            STATUS=$(curl -o /dev/null -sw "%{http_code}" "$BASE_URL$ROUTE")
+            [ "$STATUS" = "200" ] || { echo "FAIL: $ROUTE returned $STATUS (expected 200 for SPA fallback)"; exit 1; }
+          done
+          echo "PASS: SPA deep-link routes all return 200"
+
+      # ── Playwright E2E ────────────────────────────────────────────────────────
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Install E2E dependencies
+        working-directory: tests/e2e
+        run: npm install
+
+      - name: Install Playwright Chromium browser
+        working-directory: tests/e2e
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright tests
+        working-directory: tests/e2e
+        run: npx playwright test
+
+      # ── Final log snapshot ───────────────────────────────────────────────────
+
+      - name: Final container log check (no new errors)
+        run: |
+          LOGS=$(docker compose logs app 2>&1)
+          if echo "$LOGS" | grep -qE "Traceback \(most recent call last\)|Worker failed to boot|CRITICAL"; then
+            echo "FAIL: Errors found in container logs after tests"
+            echo "$LOGS"
+            exit 1
+          fi
+          echo "PASS: No errors in final log check"
+
+      # ── Tear down ─────────────────────────────────────────────────────────────
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: tests/e2e/playwright-report/
+          retention-days: 7
+
+      - name: Tear down container
+        if: always()
+        run: docker compose down -v
