@@ -25,6 +25,14 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Check TypeScript types
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Verify dependency tree
+        working-directory: frontend
+        run: npm ls --omit=optional
+
       - name: Check deprecated dependencies
         working-directory: frontend
         run: npm run check:deprecations
