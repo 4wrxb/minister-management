@@ -7,17 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-06-11
+
 ### Added
 - **Sub-path hosting via `URL_PREFIX`** with runtime `<base href>` injection. Set `URL_PREFIX=/ministry` on the backend to host the app at a sub-path behind a path-based reverse proxy (e.g. a Cloudflare Tunnel route). `/health` stays at the root so platform health probes don't need to be prefix-aware. Backend mount uses `werkzeug.middleware.dispatcher.DispatcherMiddleware`. The frontend bundle is built with `base: './'` (relative asset URLs); `backend/app.py` splices a `<base href="${URL_PREFIX}/">` and `<meta name="app-base">` tag into the served `index.html` (cached per `request.script_root`), so the same Docker image works at any prefix without a rebuild. A new `getAppBase()` helper (`frontend/src/utils/appBase.ts`) reads the meta tag and feeds the result to `<BrowserRouter basename>` and `axios.defaults.baseURL`.
 - **`SQLITE_VFS` env var** threaded into `sqlite3.connect` in `backend/database.py`. Set to `unix-dotfile` when `DATABASE_PATH` lives on SMB/CIFS (e.g. Azure Files) so SQLite uses on-disk lock files instead of POSIX `fcntl` byte-range locks.
-- **Test coverage** for the new env vars: backend pytest (`tests/backend/test_database_vfs.py`, `test_url_prefix.py`, `test_base_injection.py`), frontend vitest (`frontend/src/__tests__/appBase.test.ts`), and a prefixed-restart phase in the Docker integration job that exercises the same image with `URL_PREFIX=/ministry` (asserts the injected `<base>` tag, relative-asset resolution under the prefix, and the full Playwright admin flow against `http://localhost:8080/ministry`).
+- **Three-layer test framework:**
+  - **Layer 1 — Backend unit tests** (`tests/backend/`): pytest + Flask test client with a temp SQLite DB. Covers health, auth, players, assignments, settings, URL_PREFIX injection, and SQLITE_VFS. CI: `.github/workflows/pytest.yml`.
+  - **Layer 2 — Frontend unit tests** (`frontend/src/__tests__/`): Vitest + `@testing-library/react`. Covers `AdminLogin`, `PlayerForm`, and `appBase` helper. CI: `.github/workflows/frontend-tests.yml`.
+  - **Layer 3 — E2E tests** (`tests/e2e/`): Playwright (Chromium) against a live Docker container. Covers player submission flow, admin login/dashboard/assignment flow, and published-schedule view — including a prefixed-restart phase validating `URL_PREFIX=/ministry`. CI: `.github/workflows/e2e.yml`.
+  - Test plan docs added at `tests/TESTPLAN.md`, `tests/backend/TESTPLAN.md`, `frontend/src/__tests__/TESTPLAN.md`, `tests/e2e/TESTPLAN.md`.
+- **Frontend deprecation CI gate**: `frontend/scripts/check-deprecations.mjs` detects deprecated `npm` packages and fails CI on non-allowlisted entries; `frontend/deprecations-allowlist.json` carries explicit, reviewable exceptions. Runs in the lint job via `npm run check:deprecations`.
+- **Copilot cloud-agent setup**: `.github/workflows/copilot-setup-steps.yml` preinstalls backend and frontend dependencies in the Copilot cloud-agent environment. `.github/copilot-instructions.md` defines validation commands and repository guardrails for future Copilot-driven changes.
 - **Deployment guide rewrite** in `DEPLOYMENT.md`:
   - Full **Azure App Service + Cloudflare Tunnel sidecar** walkthrough (multi-container compose, Azure Files SMB persistence, Cloudflare IP allowlist, sub-path `/ministry` worked example).
   - New platform-agnostic **Putting Cloudflare in Front of Any Deployment** section covering both proxy and tunnel modes for Bare Metal / Cloud Run / App Service / AWS.
 - This `CHANGELOG.md`.
 
+### Fixed
+- Latent TypeScript and ESLint errors that had accumulated without a lint gate.
+
 ### Changed
 - Documentation aligned with the current codebase: `claude.md` rewritten end-to-end, `PROJECT_SUMMARY.md` schema and API tables completed, README project structure and tech stack tables refreshed.
+- `WOS_API_SECRET` constant documented as a public community-extracted client-side salt (not a private credential); misleading "move to env var for security" comment replaced with accurate context.
 - Slot-model description corrected across all docs. The auto-assigner uses a fixed 49-slot, end-of-day-anchored cadence (`23:50, 00:20, 00:50, ..., 23:20, 23:50+`) with a ±20 minute tolerance window — not "00:00 through 23:30".
 - Default `admin123` / `minister123` passwords are now called out with explicit ⚠️ warnings in `README.md`, `DEPLOYMENT.md`, and `.env.example`.
 - Hardcoded personal domain replaced with a `<your-domain.example.com>` placeholder in `DEPLOYMENT.md`.
@@ -132,7 +144,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Frontend:** React 18 + TypeScript + Vite + Tailwind, react-i18next, @dnd-kit drag-and-drop.
 - **Deployment:** multi-stage Dockerfile, `docker-compose.yml`, Google Cloud Run reference deployment with GCS FUSE.
 
-[Unreleased]: https://github.com/4wrxb/minister-management/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/4wrxb/minister-management/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/4wrxb/minister-management/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/4wrxb/minister-management/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/4wrxb/minister-management/compare/v1.1.5...v1.2.0
 [1.1.5]: https://github.com/4wrxb/minister-management/compare/v1.1.2...v1.1.5
