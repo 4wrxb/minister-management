@@ -27,6 +27,7 @@ A web application that automates State vs State (SVS) ministry-position scheduli
 - Docker + Docker Compose for local development
 - Multi-stage Docker build (Node build → Python runtime serving built assets from `backend/static/`)
 - Production target is cloud-agnostic; common targets include Google Cloud Run (with GCS FUSE), Azure App Service (multi-container with a Cloudflare Tunnel sidecar, Azure Files for SMB persistence), AWS ECS/Fargate (with EFS), and Azure Container Apps. See `DEPLOYMENT.md`.
+- Azure Container Apps has an automated, config-driven GitHub Actions pipeline: workflow at `.github/workflows/deploy-aca.yml`, Bicep templates in `infra/`, operator guide in `.github/DEPLOYMENT_WORKFLOW.md`. Deploys are pinned to `:<github.sha>` so each commit on `main` produces a new revision; re-dispatching against the same SHA is a no-op.
 
 ## Project Structure
 
@@ -65,9 +66,21 @@ minister_management/
 │   ├── package.json
 │   └── vite.config.ts
 ├── data/                               # SQLite db (created at runtime; gitignored)
+├── infra/                              # Bicep templates for Azure Container Apps deploy
+│   ├── main.bicep                      # Top-level: RG-scoped wiring
+│   ├── main.parameters.json            # Parameter contract (keys must match main.bicep)
+│   ├── storage.bicep                   # Storage account + file share for SQLite
+│   ├── aca.bicep                       # Container Apps env + Container App
+│   └── README.md
 ├── .github/
 │   ├── copilot-instructions.md         # Agent guardrails
-│   └── workflows/copilot-setup-steps.yml
+│   ├── DEPLOYMENT_WORKFLOW.md          # Operator guide for deploy-aca.yml
+│   └── workflows/
+│       ├── copilot-setup-steps.yml
+│       ├── deploy-aca.yml              # Staged Azure Container Apps deploy pipeline
+│       ├── docker-integration.yml      # Required check: smoke + E2E + lint + tests
+│       ├── backend-tests.yml
+│       └── frontend-tests.yml
 ├── Dockerfile                          # Multi-stage: Node 18 → Python 3.11
 ├── docker-compose.yml
 ├── start.sh
@@ -459,6 +472,7 @@ If `URL_PREFIX` is empty, `<base href="/">` is injected and the app serves at th
 - **Quick Start:** [QUICK_START.md](QUICK_START.md)
 - **User Guide:** [USER_GUIDE.md](USER_GUIDE.md)
 - **Deployment:** [DEPLOYMENT.md](DEPLOYMENT.md)
+- **ACA Deploy Workflow:** [.github/DEPLOYMENT_WORKFLOW.md](.github/DEPLOYMENT_WORKFLOW.md)
 - **Technical Overview:** [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md)
 - **From-Scratch Rebuild:** [RECREATION_GUIDE.md](RECREATION_GUIDE.md)
 - **Change Log:** [CHANGELOG.md](CHANGELOG.md)
