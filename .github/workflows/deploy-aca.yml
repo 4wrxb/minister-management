@@ -237,6 +237,75 @@ jobs:
           echo "Digest: ${{ steps.push.outputs.digest }}"
           echo "Tags: ${{ needs.validate-config.outputs.image-uri }}"
 
+  # ─── Verify GHCR Package Is Pullable ─────────────────────────────
+  # ACA pulls images anonymously (no registry credentials configured),
+  # so the GHCR package MUST be public. GitHub creates new packages as
+  # private by default, so on the very first run of this workflow the
+  # operator must visit the package settings and either:
+  #   - flip visibility to Public, or
+  #   - enable "Inherit access from source repository" (works because
+  #     the Dockerfile has org.opencontainers.image.source pointing
+  #     at this repo, so the package is auto-connected on first push).
+  # This job fails fast with a clear message so we don't waste 5–10
+  # minutes watching ACA bootstrap fail with a cryptic DENIED error.
+  # See .github/DEPLOYMENT_WORKFLOW.md "Step 0" and DEPLOYMENT.md
+  # Option 5 for the security audit and operator instructions.
+  verify-package-visibility:
+    name: Verify GHCR package is public
+    runs-on: ubuntu-latest
+    needs: build-image
+    permissions:
+      packages: read
+    steps:
+      - name: Check package visibility
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          PKG: minister-management
+        run: |
+          set -eo pipefail
+
+          # GitHub uses different endpoints for user-owned vs org-owned
+          # packages. Probe the owner type from the public users API,
+          # then call the matching packages endpoint.
+          OWNER_TYPE=$(gh api "/users/${OWNER}" --jq '.type' 2>/dev/null || echo "")
+          if [ "$OWNER_TYPE" = "Organization" ]; then
+            ENDPOINT="/orgs/${OWNER}/packages/container/${PKG}"
+            SETTINGS_URL="https://github.com/orgs/${OWNER}/packages/container/${PKG}/settings"
+          else
+            ENDPOINT="/users/${OWNER}/packages/container/${PKG}"
+            SETTINGS_URL="https://github.com/users/${OWNER}/packages/container/${PKG}/settings"
+          fi
+
+          echo "Checking ${ENDPOINT} ..."
+
+          if ! BODY=$(gh api "$ENDPOINT" 2>/dev/null); then
+            echo "::error::GHCR package '${PKG}' not found under '${OWNER}', or the"
+            echo "::error::workflow's GITHUB_TOKEN lacks 'packages: read' permission."
+            echo "::error::On the very first deploy, this can happen if build-image"
+            echo "::error::has not finished pushing yet — re-run after it succeeds."
+            echo "::error::See DEPLOYMENT.md Option 5 Step 0."
+            exit 1
+          fi
+
+          VISIBILITY=$(echo "$BODY" | jq -r '.visibility // "unknown"')
+          echo "Package visibility: ${VISIBILITY}"
+
+          if [ "$VISIBILITY" != "public" ]; then
+            echo "::error::GHCR package '${PKG}' is '${VISIBILITY}' — ACA cannot pull it."
+            echo "::error::Fix: open ${SETTINGS_URL}"
+            echo "::error::      then either click 'Change visibility' → Public, OR"
+            echo "::error::      enable 'Inherit access from source repository'"
+            echo "::error::      (works because the Dockerfile sets image.source to this repo)."
+            echo "::error::Re-run this workflow once the package is public."
+            echo "::error::See DEPLOYMENT.md Option 5 Step 0 and"
+            echo "::error::.github/DEPLOYMENT_WORKFLOW.md for the security audit"
+            echo "::error::explaining why public GHCR is safe for this codebase."
+            exit 1
+          fi
+
+          echo "✓ GHCR package is public — ACA will be able to pull it anonymously"
+
   # ─── Check/Bootstrap Resources ───────────────────────────────────
   bootstrap:
     name: Bootstrap resources if needed
@@ -283,7 +352,7 @@ jobs:
   deploy-staging:
     name: Deploy to staging
     runs-on: ubuntu-latest
-    needs: [validate-config, build-image, bootstrap]
+    needs: [validate-config, build-image, verify-package-visibility, bootstrap]
     if: |
       github.event.inputs.action == 'deploy' && 
       github.event.inputs.environment == 'staging' &&
@@ -410,7 +479,7 @@ jobs:
   deploy-production:
     name: Deploy to production
     runs-on: ubuntu-latest
-    needs: [validate-config, build-image, approval-gate]
+    needs: [validate-config, build-image, verify-package-visibility, approval-gate]
     if: |
       github.event.inputs.environment == 'production' && 
       github.event.inputs.action == 'deploy'

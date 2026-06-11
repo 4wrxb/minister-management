@@ -24,7 +24,20 @@ main.bicep (orchestrator, accepts all params + secrets)
            └── scale rule: HTTP concurrency-based (50 req/replica)
 ```
 
-There is intentionally **no managed identity / ACR pull configuration**. The current workflow uses **GitHub Container Registry (`ghcr.io`)** with a public image, so the Container App pulls anonymously. If you switch to ACR with a private image, add a `registries` block in `aca.bicep` and assign `AcrPull` to a managed identity.
+### Image registry
+
+There is intentionally **no managed identity / ACR pull configuration**. The Container App pulls **anonymously** from `ghcr.io`, which requires the GHCR package to be **public**. The `Dockerfile` sets `org.opencontainers.image.source` so GitHub auto-connects the package to this repo on first push (it then surfaces on the repo's Packages tab and exposes the "Inherit access from source repository" toggle).
+
+GitHub creates packages as private by default, so the operator has a one-time step on the very first deploy:
+
+1. Run the `deploy-aca.yml` workflow once → `build-image` pushes and creates the package (as private).
+2. The `verify-package-visibility` preflight job fails fast with a clear error pointing at the package settings URL.
+3. Open that URL and either flip visibility to **Public** or enable **Inherit access from source repository**.
+4. Re-run the workflow. From then on the preflight always passes.
+
+A full security audit (Dockerfile / .dockerignore / frontend build / backend source) confirming that public GHCR is safe for this codebase lives in [`.github/DEPLOYMENT_WORKFLOW.md`](../.github/DEPLOYMENT_WORKFLOW.md#container-image-registry--visibility). Step-by-step operator instructions are in [`DEPLOYMENT.md`](../DEPLOYMENT.md#option-5-azure-container-apps-automated) (Option 5, Step 0).
+
+If you switch to ACR with a private image, add a `registries` block in `aca.bicep` and assign `AcrPull` to a managed identity.
 
 ## Files
 

@@ -621,6 +621,21 @@ This pattern is ideal for small-scale apps (<1000 users/day) that need:
 - `az` CLI (authenticated to Azure)
 - Docker (for local image builds)
 
+### Step 0: Make the GHCR package public (one-time)
+
+The Container App pulls images **anonymously** from `ghcr.io`, so the package must be **public**. GitHub creates new container packages as private by default, so this is a one-time setup step:
+
+1. **Trigger the workflow once** (see Step 3 below). The `build-image` job will push `ghcr.io/<your-owner>/minister-management:<sha>` and GitHub will auto-create the package. Because the `Dockerfile` sets `org.opencontainers.image.source`, the package is **auto-connected to this repo** and immediately surfaces on your repo's **Packages** tab.
+2. The next job, `verify-package-visibility`, will **fail fast** with a clear error and a direct link to the package settings page — this is expected on the very first run.
+3. Open that URL (typically `https://github.com/users/<owner>/packages/container/minister-management/settings` or `https://github.com/orgs/<owner>/...`), then either:
+   - Click **Change visibility** → **Public** → confirm, *or*
+   - Enable **Inherit access from source repository** in the package settings (works because the Dockerfile labels connect the package to the repo)
+4. Re-run the workflow. From now on, `verify-package-visibility` passes in seconds and you never need to touch this setting again.
+
+**Why public is safe here:** the image contains no secrets — no build-time `--build-arg`/`--mount=type=secret`, no `.env` files (excluded by `.dockerignore`), no `VITE_*` baked into the frontend bundle, and all runtime credentials (`SECRET_KEY`, `ADMIN_PASSWORD`, `MINISTER_PASSWORD`, etc.) flow into the Container App via the ACA `secrets` block, not into the image. See the full audit in [`.github/DEPLOYMENT_WORKFLOW.md`](.github/DEPLOYMENT_WORKFLOW.md#container-image-registry--visibility).
+
+**Why this isn't automated:** flipping package visibility requires a PAT with `admin:packages` scope; the workflow's built-in `GITHUB_TOKEN` cannot do it. Storing a long-lived PAT just to click one bit once per repo is the wrong trade-off — the preflight check catches the mistake reliably and the operator UX is "one extra click on the first deploy ever."
+
 ### Step 1: Set Up Azure Service Principal
 
 Create a service principal for GitHub Actions:

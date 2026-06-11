@@ -18,7 +18,9 @@ Validate Bicep
     ↓
 Run Test Suite
     ↓
-Build & Push Image
+Build & Push Image  ─────────────────┐
+    ↓                                │
+Verify GHCR Package Is Public  ←─────┘  (preflight; fails fast if private)
     ↓
 Bootstrap Resources (if needed)
     ├─ Staging Path
@@ -140,7 +142,30 @@ gh workflow run deploy-aca.yml \
 
 ---
 
-### 5. `bootstrap`
+### 5. `verify-package-visibility`
+
+**Purpose:** Fail fast if the GHCR package is not pullable by Azure Container Apps.
+
+**Why this exists:** ACA pulls images anonymously (the Container App has no `registries` block, intentionally — see [Container Image Registry & Visibility](#container-image-registry--visibility) for the security rationale). GitHub creates new packages as private by default, so on the very first deploy the operator has to make the package public. This job catches that mistake in seconds instead of letting ACA bootstrap fail 5–10 minutes later with a cryptic `DENIED` error.
+
+**Conditions:**
+- Always runs after `build-image` succeeds.
+
+**Steps:**
+1. Probe the repo owner via `GET /users/{owner}` to decide between the user and org packages endpoint.
+2. Call `GET /{users|orgs}/{owner}/packages/container/minister-management` with `GITHUB_TOKEN`.
+3. If the package is missing or visibility ≠ `public`, fail with a helpful error message that includes:
+   - The exact package settings URL to open
+   - Instructions to either flip visibility to **Public** or enable **Inherit access from source repository** (works because the Dockerfile sets `org.opencontainers.image.source`)
+   - A pointer to `DEPLOYMENT.md` Option 5 Step 0 and to this guide's security audit
+
+**Permissions:** `packages: read` (added at the job level; does not affect other jobs).
+
+**One-time setup:** On the very first deploy this job WILL fail because `build-image` has just created the package as private. That is the expected behavior — fix it once via the URL in the error message and re-run; from then on this job passes in < 5 seconds on every run.
+
+---
+
+### 6. `bootstrap`
 
 **Purpose:** Create Azure resource group and resources if they don't exist (idempotent).
 
@@ -160,7 +185,7 @@ gh workflow run deploy-aca.yml \
 
 ---
 
-### 6. `deploy-staging`
+### 7. `deploy-staging`
 
 **Purpose:** Deploy to staging environment with health checks and smoke tests.
 
@@ -191,7 +216,7 @@ gh workflow run deploy-aca.yml \
 
 ---
 
-### 7. `approval-gate`
+### 8. `approval-gate`
 
 **Purpose:** Require manual approval before production deployment.
 
@@ -207,7 +232,7 @@ gh workflow run deploy-aca.yml \
 
 ---
 
-### 8. `deploy-production`
+### 9. `deploy-production`
 
 **Purpose:** Deploy to production with rollback safety.
 
@@ -235,7 +260,7 @@ gh workflow run deploy-aca.yml \
 
 ---
 
-### 9. `post-deployment-checks`
+### 10. `post-deployment-checks`
 
 **Purpose:** Verify deployment, log metadata, and generate status report.
 
@@ -253,7 +278,7 @@ gh workflow run deploy-aca.yml \
 
 ---
 
-### 10. `deployment-status`
+### 11. `deployment-status`
 
 **Purpose:** Final status check and workflow conclusion.
 
@@ -302,6 +327,44 @@ gh workflow run deploy-aca.yml \
 
 ---
 
+## Container Image Registry & Visibility
+
+The workflow builds the image with `docker/build-push-action` and pushes it to **GitHub Container Registry** (`ghcr.io/<owner>/minister-management`). The push side authenticates with the workflow's auto-provided `GITHUB_TOKEN`, so **no `GHCR_PAT` secret is required for pushing**.
+
+The Container App pulls the image **anonymously** — `aca.bicep` deliberately does not declare a `registries` block. This means the GHCR package **must be public**. There is no in-workflow automation that flips visibility, because doing so would require a long-lived PAT with `admin:packages` scope just to be used once per repo.
+
+Instead, the workflow's `verify-package-visibility` job (described above) fails fast with a clear error if the package isn't public, and the operator does a one-time UI toggle. Once done, it never needs to be revisited.
+
+### Why public GHCR is safe for this codebase — security audit
+
+Verified by inspecting Dockerfile, .dockerignore, the frontend Vite build, and backend source:
+
+| Surface | Finding |
+|---------|---------|
+| `Dockerfile` | No `ARG`, no `--build-arg`, no `--mount=type=secret`. Baked `ENV` is only `FLASK_ENV=production`, `PYTHONUNBUFFERED=1`, `PORT=8080`, `DATABASE_PATH=/data/minister.db` — none are secrets. |
+| `.dockerignore` | Excludes `.env*`, `*.db`, `*.sqlite*`, `.git/`. |
+| `.env` in repo | None. Only `.env.example` (placeholders). |
+| Frontend Vite build | Zero `import.meta.env.VITE_*` / `process.env.*` references in `frontend/src/`. Nothing baked into the JS bundle. |
+| Backend source | All credentials are read with `os.getenv(...)` at runtime. Defaults are placeholder values (`dev-secret-key`, `admin123`). |
+| `WOS_API_SECRET` fallback | Documented in `claude.md` as a public client-side constant from the WOS game client. |
+| Runtime credentials | `SECRET_KEY`, `ADMIN_PASSWORD`, `MINISTER_PASSWORD`, `URL_PREFIX` flow in at runtime via ACA `secrets` block. Not in image. |
+
+**Conclusion:** the image contains nothing that isn't already in the public GitHub repo. Public GHCR is the right choice at this scale.
+
+### Provenance label
+
+The `Dockerfile` sets:
+
+```
+LABEL org.opencontainers.image.source="https://github.com/4wrxb/minister-management"
+LABEL org.opencontainers.image.description="Whiteout Survival ministry-position scheduling system"
+LABEL org.opencontainers.image.title="minister-management"
+```
+
+GHCR uses `image.source` to auto-connect the package to the repo on first push. This makes the package surface on the repo's Packages tab and enables the **Inherit access from source repository** option in the package settings — which is the lowest-risk way to flip visibility to public for a public repo.
+
+---
+
 ## Secrets & Configuration
 
 The workflow uses GitHub Secrets (must be configured in repo settings):
@@ -313,6 +376,8 @@ The workflow uses GitHub Secrets (must be configured in repo settings):
 | `ADMIN_PASSWORD` | Admin login password | Yes |
 | `MINISTER_PASSWORD` | Minister login password | Yes |
 | `URL_PREFIX` | Sub-path for app (e.g., `/ministry`) | No |
+
+> **No `GHCR_PAT`, `GHCR_USERNAME`, or registry-credential secret is needed** — image pushes use `GITHUB_TOKEN` automatically and image pulls are anonymous (against a public package).
 
 ### Setting Up Azure Credentials
 
@@ -344,9 +409,10 @@ gh run watch <run-id>
 
 | Scenario | Cause | Fix |
 |----------|-------|-----|
-| Bicep validation fails | Syntax error in `.bicep` files | Check `az bicep validate` output |
+| Bicep validation fails | Syntax error in `.bicep` files | Check `bicep build` / `bicep lint` output |
 | Tests fail | Test suite errors | Fix code or `skip_tests=true` for hotfix |
-| Bootstrap fails | RG creation permission denied | Check AZURE_CREDENTIALS has Contributor role |
+| `verify-package-visibility` fails | GHCR package is private (default for new packages) | See [GHCR Pull Denied / Package Is Private](#ghcr-pull-denied--package-is-private) below |
+| Bootstrap fails | RG creation permission denied | Check `AZURE_CREDENTIALS` has Contributor role |
 | Deployment hangs | Container App slow to start | Check Container App logs in Azure portal |
 | Health check fails | App not responding on `/health` | Check backend logs, database connectivity |
 | Auto-rollback triggered | Deployment unhealthy | Manual investigation required |
@@ -419,6 +485,24 @@ az containerapp logs show \
 **Fix:** 
 1. Verify GitHub token has `write:packages` scope
 2. Check GitHub Actions permissions in repo settings
+
+---
+
+### GHCR Pull Denied / Package Is Private
+
+**Symptom:** Either the `verify-package-visibility` preflight job fails with a `package is 'private'` error, or — if the preflight is somehow bypassed — the `deploy-staging` / `deploy-production` job times out at "Wait for app to be healthy" and the Container App logs show `DENIED: requested access to the resource is denied` against `ghcr.io/<owner>/minister-management:<tag>`.
+
+**Cause:** GitHub creates new container packages as **private** by default, even when the source repo is public. ACA pulls anonymously (the Container App has no `registries` block, intentionally — see [Container Image Registry & Visibility](#container-image-registry--visibility)), so a private package cannot be pulled.
+
+**Fix (one-time per repo):**
+
+1. Open the package settings URL printed in the `verify-package-visibility` job error. It will look like:
+   - User repo: `https://github.com/users/<owner>/packages/container/minister-management/settings`
+   - Org repo: `https://github.com/orgs/<owner>/packages/container/minister-management/settings`
+2. In the **Danger Zone**, click **Change visibility** → **Public** → confirm. *(Alternatively, in the **Manage Actions access** / **Inherit access from source repository** section, enable repo-inherited access. Either makes the package pullable; for public repos these end up equivalent.)*
+3. Re-run the failed workflow. The preflight will now pass in under five seconds.
+
+**Why we don't automate this:** Flipping visibility requires a PAT with `admin:packages` scope; the workflow's built-in `GITHUB_TOKEN` cannot do it. Adding a long-lived PAT for a one-time-per-repo click is the wrong trade-off — the preflight job catches this mistake reliably and the security audit in [Container Image Registry & Visibility](#container-image-registry--visibility) confirms that public GHCR is safe for this codebase.
 
 ---
 
