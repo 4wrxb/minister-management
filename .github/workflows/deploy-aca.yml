@@ -337,7 +337,7 @@ jobs:
             --resource-group "$RG" \
             --template-file ${{ env.BICEP_DIR }}/main.bicep \
             --parameters \
-              environment=staging \
+              environmentName=staging \
               location=$LOCATION \
               containerImage="${{ needs.validate-config.outputs.image-uri }}" \
               secretKey="${{ secrets.SECRET_KEY }}" \
@@ -452,7 +452,7 @@ jobs:
             --resource-group "$RG" \
             --template-file ${{ env.BICEP_DIR }}/main.bicep \
             --parameters \
-              environment=production \
+              environmentName=production \
               location=$LOCATION \
               containerImage="${{ needs.validate-config.outputs.image-uri }}" \
               secretKey="${{ secrets.SECRET_KEY }}" \
