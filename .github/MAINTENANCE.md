@@ -82,7 +82,7 @@ Tools:
 - **Safety** — checks Python dependencies for known CVEs
 - **npm audit** — checks Node dependencies for security issues
 
-Results are informational; don't block merges.
+Results are informational for PR gating (scheduled-only so they don’t block merges), but the workflow run fails when vulnerabilities are found to trigger notifications.
 
 ## 🚀 Recommended Branch Protection Rules
 
