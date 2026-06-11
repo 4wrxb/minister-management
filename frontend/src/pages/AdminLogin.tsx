@@ -25,8 +25,9 @@ export default function AdminLogin() {
 
       // Navigate to dashboard
       navigate('/admin/dashboard');
-    } catch (err: any) {
-      setError(err.response?.data?.error || t('admin.invalidPassword'));
+    } catch (err) {
+      const msg = (axios.isAxiosError(err) && err.response?.data?.error) || t('admin.invalidPassword');
+      setError(msg);
     } finally {
       setLoading(false);
     }

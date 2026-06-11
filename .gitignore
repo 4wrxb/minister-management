@@ -66,3 +66,7 @@ docker-compose.override.yml
 
 # AI Tools
 .claude/
+
+# Runtime / test artifacts
+data/
+.vite/

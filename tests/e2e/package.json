@@ -1,0 +1,14 @@
+{
+  "name": "minister-management-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Playwright E2E integration tests (runs against the Docker container, never shipped to production)",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.44.0"
+  }
+}

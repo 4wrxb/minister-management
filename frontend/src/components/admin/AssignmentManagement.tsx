@@ -9,6 +9,7 @@ import {
   useDraggable,
   useDroppable,
   DragEndEvent,
+  DragOverEvent,
   DragStartEvent,
 } from '@dnd-kit/core';
 import { Sparkles, Download, AlertCircle, Globe, EyeOff, Lock, Unlock } from 'lucide-react';
@@ -228,10 +229,12 @@ export default function AssignmentManagement() {
   useEffect(() => {
     fetchResearchDay();
     fetchPublishedDays();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Mount-only initialization; both fetch helpers are recreated each render and intentionally not memoized to avoid re-fire loops.
   }, []);
 
   useEffect(() => {
     fetchAssignments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Re-fetch only when the selected day changes; fetchAssignments is recreated each render so omitting it from deps preserves that.
   }, [selectedDay]);
 
   const fetchResearchDay = async () => {
@@ -266,8 +269,9 @@ export default function AssignmentManagement() {
         { headers: { Authorization: `Bearer ${token}` } }
       );
       setPublishedDays(response.data.published_days || []);
-    } catch (err: any) {
-      setError(err.response?.data?.error || t('admin.publishError'));
+    } catch (err) {
+      const msg = (axios.isAxiosError(err) && err.response?.data?.error) || t('admin.publishError');
+      setError(msg);
     }
   };
 
@@ -280,8 +284,9 @@ export default function AssignmentManagement() {
         { headers: { Authorization: `Bearer ${token}` } }
       );
       setPublishedDays(response.data.published_days || []);
-    } catch (err: any) {
-      setError(err.response?.data?.error || t('admin.unpublishError'));
+    } catch (err) {
+      const msg = (axios.isAxiosError(err) && err.response?.data?.error) || t('admin.unpublishError');
+      setError(msg);
     }
   };
 
@@ -299,8 +304,9 @@ export default function AssignmentManagement() {
       }
       setAssignments(cleaned);
       setUnassignedPlayers([]);
-    } catch (err: any) {
-      setError(err.response?.data?.error || t('admin.fetchAssignmentsError'));
+    } catch (err) {
+      const msg = (axios.isAxiosError(err) && err.response?.data?.error) || t('admin.fetchAssignmentsError');
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -320,8 +326,9 @@ export default function AssignmentManagement() {
 
       setAssignments(response.data.assignments);
       setUnassignedPlayers(response.data.unassigned);
-    } catch (err: any) {
-      setError(err.response?.data?.error || t('admin.autoAssignError'));
+    } catch (err) {
+      const msg = (axios.isAxiosError(err) && err.response?.data?.error) || t('admin.autoAssignError');
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -332,7 +339,7 @@ export default function AssignmentManagement() {
     setActivePlayer(player);
   };
 
-  const handleDragOver = (event: any) => {
+  const handleDragOver = (event: DragOverEvent) => {
     const { over } = event;
     if (over) {
       const overId = over.id as string;
@@ -452,8 +459,9 @@ export default function AssignmentManagement() {
         },
         { headers: { Authorization: `Bearer ${token}` } }
       );
-    } catch (err: any) {
-      setError(err.response?.data?.error || t('admin.saveError'));
+    } catch (err) {
+      const msg = (axios.isAxiosError(err) && err.response?.data?.error) || t('admin.saveError');
+      setError(msg);
     }
   };
 
@@ -472,7 +480,7 @@ export default function AssignmentManagement() {
       document.body.appendChild(link);
       link.click();
       link.remove();
-    } catch (err: any) {
+    } catch {
       setError(t('admin.exportError'));
     }
   };

@@ -108,8 +108,8 @@ export default function PlayerForm() {
         stove_lv: wosData.stove_lv || undefined,
         stove_lv_content: wosData.stove_lv_content || undefined,
       }));
-    } catch (err: any) {
-      const msg = err.response?.data?.error || t('form.wosLookupFailed');
+    } catch (err) {
+      const msg = (axios.isAxiosError(err) && err.response?.data?.error) || t('form.wosLookupFailed');
       setError(msg);
     } finally {
       setWosLoading(false);
@@ -208,8 +208,9 @@ export default function PlayerForm() {
       setTimeout(() => {
         navigate('/');
       }, 5000);
-    } catch (err: any) {
-      setError(err.response?.data?.error || t('form.submitError'));
+    } catch (err) {
+      const msg = (axios.isAxiosError(err) && err.response?.data?.error) || t('form.submitError');
+      setError(msg);
     } finally {
       setLoading(false);
     }

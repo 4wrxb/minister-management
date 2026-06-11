@@ -92,11 +92,12 @@ export default function UpdateSubmission() {
       } catch {
         setPlayerAssignments(null);
       }
-    } catch (err: any) {
-      if (err.response?.status === 404) {
+    } catch (err) {
+      if (axios.isAxiosError(err) && err.response?.status === 404) {
         setError(t('update.notFound'));
       } else {
-        setError(err.response?.data?.error || t('form.errorOccurred'));
+        const msg = (axios.isAxiosError(err) && err.response?.data?.error) || t('form.errorOccurred');
+        setError(msg);
       }
       setPlayerData(null);
     } finally {
@@ -161,8 +162,9 @@ export default function UpdateSubmission() {
       setTimeout(() => {
         navigate('/');
       }, 2000);
-    } catch (err: any) {
-      setError(err.response?.data?.error || t('form.updateError'));
+    } catch (err) {
+      const msg = (axios.isAxiosError(err) && err.response?.data?.error) || t('form.updateError');
+      setError(msg);
     } finally {
       setLoading(false);
     }

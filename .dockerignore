@@ -34,6 +34,10 @@ README.md
 .DS_Store
 Thumbs.db
 
+# Tests (never ship to container)
+tests/
+frontend/src/__tests__/
+
 # Frontend build artifacts (built inside Docker)
 frontend/dist/
 frontend/node_modules/
