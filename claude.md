@@ -1,6 +1,6 @@
 # Claude Context: Ministry Management System
 
-> Purpose of this file: a fast, accurate primer for an AI assistant (Claude / Copilot / etc.) opening this repo. Keep it in sync whenever you add or change features. If you add an API endpoint, DB column, or environment variable, update this file in the same change.
+> Purpose of this file: the single authoritative reference for this project — architecture, business logic, schema, API, development rules, and completion requirements. [`.github/copilot-instructions.md`](.github/copilot-instructions.md) is a short pointer to this file plus the CI validation commands.
 
 ## Project Overview
 
@@ -344,10 +344,14 @@ npm run dev                   # http://localhost:5173
 2. Frontend changes: Vite HMR.
 3. Schema changes: append to the migrations list in `database.py` (idempotent `ALTER TABLE`).
 4. Translations: edit `i18n.ts`; Vite hot-reloads.
+5. For deployment options, see `DEPLOYMENT.md`.
 
 ### Before Committing
-- Update **all** affected docs (`claude.md`, `PROJECT_SUMMARY.md`, `RECREATION_GUIDE.md`, `USER_GUIDE.md`, `README.md`, `CHANGELOG.md`).
-- Run the validation commands in `.github/copilot-instructions.md`.
+- Update **all** affected docs in the same change:
+  - User-facing: `README.md`, `QUICK_START.md`, `USER_GUIDE.md`, `DEPLOYMENT.md`
+  - Internal: `claude.md`, `PROJECT_SUMMARY.md`, `RECREATION_GUIDE.md`, `CHANGELOG.md`
+- Add or update tests: backend unit tests for API/schema/logic changes, frontend unit tests for component/UI changes, Playwright E2E for user-visible or cross-page flows.
+- Run the validation commands in [`.github/copilot-instructions.md`](.github/copilot-instructions.md) and confirm tests pass.
 - Test in English plus one RTL language (Arabic).
 - Verify mobile responsiveness for any UI change.
 
