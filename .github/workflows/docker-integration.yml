@@ -168,8 +168,7 @@ jobs:
           # on the bind-mounted host directory.
           docker compose down
           sudo rm -rf data
-          docker compose -f docker-compose.yml -f docker-compose.prefix.yml \
-            up -d --no-build --force-recreate
+          URL_PREFIX=/ministry docker compose up -d --no-build --force-recreate
           echo "Container restarted with URL_PREFIX=/ministry"
 
       - name: Wait for prefixed health endpoint

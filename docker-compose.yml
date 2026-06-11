@@ -13,4 +13,8 @@ services:
       - ADMIN_PASSWORD=admin123
       - MINISTER_PASSWORD=minister123
       - DATABASE_PATH=/app/data/minister.db
+      # Optional URL sub-path. Leave unset for root-mounted (default). Override
+      # at the CLI for sub-path testing/deployment, e.g.:
+      #   URL_PREFIX=/ministry docker compose up -d --no-build --force-recreate
+      - URL_PREFIX=${URL_PREFIX:-}
     restart: unless-stopped
