@@ -129,7 +129,9 @@ jobs:
   build-image:
     name: Build and push image
     runs-on: ubuntu-latest
-    needs: validate-bicep
+    # validate-config must be in needs so we can read its image-uri output
+    # below. validate-bicep is the gating quality check.
+    needs: [validate-config, validate-bicep]
     # GITHUB_TOKEN needs packages:write to push to ghcr.io. On many repos
     # the org/user default for default_workflow_permissions is "read", so
     # we must request packages:write explicitly per-job. contents:read is
