@@ -1,0 +1,12 @@
+{
+  "exact": [
+    "@humanwhocodes/config-array@0.13.0",
+    "@humanwhocodes/object-schema@2.0.3",
+    "eslint@8.57.1",
+    "glob@7.2.3",
+    "inflight@1.0.6",
+    "rimraf@3.0.2",
+    "whatwg-encoding@3.1.1"
+  ],
+  "packages": []
+}
