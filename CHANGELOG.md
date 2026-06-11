@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Comprehensive maintenance and security workflows**:
   - **Dependabot auto-updates** (`.github/dependabot.yml`): Weekly automated PRs for npm, pip, and GitHub Actions dependencies. Semver-major updates for React, TypeScript, and Flask are ignored by Dependabot and require manual review to upgrade.
-  - **Nightly security scanning** (`.github/workflows/security-scan.yml`): CodeQL static analysis, Safety vulnerability checks, and npm audit. Non-blocking, informational results. Scheduled for 02:00 UTC daily.
+  - **Nightly security scanning** (`.github/workflows/security-scan.yml`): CodeQL static analysis, Safety vulnerability checks, and npm audit. Runs nightly at 02:00 UTC; the workflow run fails when vulnerabilities are detected (does not block merges because it’s scheduled).
   - **Daily maintenance checks** were evaluated and intentionally removed because they overlapped with Dependabot coverage or lacked a low-noise path to become a useful gating signal.
   - **Documentation guide** (`.github/MAINTENANCE.md`): Complete reference for workflow strategy, configuration, and troubleshooting.
 
