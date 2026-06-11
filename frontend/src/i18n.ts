@@ -298,12 +298,6 @@ const resources = {
         workflow7: 'Export to Excel for your records.',
         workflow8: 'Publish each day\'s schedule when ready — players will see it on the home page.',
       },
-      promo: {
-        lootbarTitle: 'Need more speedups? Top up at LootBar',
-        lootbarDesc: 'Best prices for Whiteout Survival top-ups',
-        lootbarCta: 'Power up your account at LootBar',
-        lootbarSpeedups: 'Need more speedups? Top up at LootBar',
-      },
       common: {
         cancel: 'Cancel',
         save: 'Save',
@@ -608,12 +602,6 @@ const resources = {
         workflow6: '보호하려는 수동 배정을 잠급니다.',
         workflow7: '기록을 위해 Excel로 내보냅니다.',
         workflow8: '준비되면 각 요일 일정을 공개합니다 — 플레이어가 홈 페이지에서 볼 수 있습니다.',
-      },
-      promo: {
-        lootbarTitle: '더 많은 가속이 필요하신가요? LootBar에서 충전하세요',
-        lootbarDesc: 'Whiteout Survival 최저가 충전',
-        lootbarCta: 'LootBar에서 계정을 강화하세요',
-        lootbarSpeedups: '더 많은 가속이 필요하신가요? LootBar에서 충전하세요',
       },
       common: {
         cancel: '취소',
@@ -920,12 +908,6 @@ const resources = {
         workflow7: '导出到Excel作为记录。',
         workflow8: '准备好后发布每天的日程 — 玩家将在主页上看到。',
       },
-      promo: {
-        lootbarTitle: '需要更多加速？在 LootBar 充值',
-        lootbarDesc: 'Whiteout Survival 最优惠充值价格',
-        lootbarCta: '在 LootBar 充值强化您的账号',
-        lootbarSpeedups: '需要更多加速？在 LootBar 充值',
-      },
       common: {
         cancel: '取消',
         save: '保存',
@@ -1231,12 +1213,6 @@ const resources = {
         workflow7: 'Kayıtlarınız için Excel\'e aktarın.',
         workflow8: 'Hazır olduğunda her günün programını yayınlayın — oyuncular ana sayfada görecektir.',
       },
-      promo: {
-        lootbarTitle: 'Daha fazla hızlandırma mı gerekiyor? LootBar\'dan yükleyin',
-        lootbarDesc: 'Whiteout Survival için en iyi yükleme fiyatları',
-        lootbarCta: 'LootBar\'da hesabınızı güçlendirin',
-        lootbarSpeedups: 'Daha fazla hızlandırma mı gerekiyor? LootBar\'dan yükleyin',
-      },
       common: {
         cancel: 'İptal',
         save: 'Kaydet',
@@ -1541,12 +1517,6 @@ const resources = {
         workflow6: 'اقفل أي تعيينات يدوية تريد حمايتها.',
         workflow7: 'صدّر إلى Excel لسجلاتك.',
         workflow8: 'انشر جدول كل يوم عندما يكون جاهزاً — سيراه اللاعبون على الصفحة الرئيسية.',
-      },
-      promo: {
-        lootbarTitle: 'تحتاج المزيد من التسريعات؟ اشحن من LootBar',
-        lootbarDesc: 'أفضل أسعار شحن Whiteout Survival',
-        lootbarCta: 'عزز حسابك من LootBar',
-        lootbarSpeedups: 'تحتاج المزيد من التسريعات؟ اشحن من LootBar',
       },
       common: {
         cancel: 'إلغاء',
