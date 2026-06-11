@@ -91,14 +91,25 @@ function collectDeprecatedFromLockfile(path) {
 
   const found = new Map();
 
+  function derivePackageName(packagePath, details) {
+    if (typeof details.name === 'string' && details.name) {
+      return details.name;
+    }
+
+    if (typeof packagePath !== 'string' || !packagePath) {
+      return null;
+    }
+
+    const match = packagePath.match(/(?:^|\/)node_modules\/(@[^/]+\/[^/]+|[^/]+)$/);
+    return match ? match[1] : null;
+  }
+
   for (const [packagePath, details] of Object.entries(packages)) {
     if (!details || typeof details !== 'object' || !details.deprecated) {
       continue;
     }
 
-    const packageName = packagePath.startsWith('node_modules/')
-      ? packagePath.slice('node_modules/'.length)
-      : details.name;
+    const packageName = derivePackageName(packagePath, details);
 
     if (!packageName) {
       continue;
@@ -144,7 +155,7 @@ if (unexpected.length > 0) {
     console.error(`  reason: ${entry.message}`);
     console.error(`  path:   ${entry.path}`);
   }
-  console.error('\nAdd approved entries to frontend/deprecations-allowlist.json to allow these explicitly.');
+  console.error(`\nAdd approved entries to ${allowlistPath} to allow these explicitly.`);
   process.exit(1);
 }
 
