@@ -731,7 +731,7 @@ jobs:
             | jq -s '[.[].[] | .id]')
           COUNT=$(echo "$DEPLOYMENTS" | jq 'length')
           if [ "$COUNT" -eq 0 ]; then
-            echo "No active staging deployments found in GitHub — nothing to deactivate."
+            echo "No staging deployments found in GitHub — nothing to deactivate."
             exit 0
           fi
           echo "$DEPLOYMENTS" | jq -r '.[]' | while read -r DEPLOY_ID; do
