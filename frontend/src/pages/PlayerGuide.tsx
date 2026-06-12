@@ -1,10 +1,25 @@
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, FileText, Edit, Clock, Palette, Globe, Lightbulb } from 'lucide-react';
+import axios from 'axios';
+import { getToleranceMinutes } from '../utils/slotOffset';
 
 export default function PlayerGuide() {
   const navigate = useNavigate();
   const { t } = useTranslation();
+  const [timeSlotOffset, setTimeSlotOffset] = useState<number | null>(null);
+
+  useEffect(() => {
+    axios.get('/api/settings/time-slot-offset')
+      .then(res => {
+        const value = res.data?.time_slot_offset;
+        if (typeof value === 'number') setTimeSlotOffset(value);
+      })
+      .catch(() => {});
+  }, []);
+
+  const toleranceMinutes = getToleranceMinutes(timeSlotOffset);
 
   return (
     <div className="min-h-screen bg-dark-bg py-8 px-4">
@@ -57,7 +72,9 @@ export default function PlayerGuide() {
                   <li>{t('playerGuide.step2Select')}</li>
                   <li>{t('playerGuide.step2Days')}</li>
                   <li>{t('playerGuide.step2Timezone')}</li>
-                  <li>{t('playerGuide.step2Tolerance')}</li>
+                  {toleranceMinutes !== null && (
+                    <li>{t('playerGuide.step2Tolerance', { minutes: toleranceMinutes })}</li>
+                  )}
                 </ul>
               </div>
               <div>

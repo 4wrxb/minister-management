@@ -47,6 +47,7 @@ function setupStartupMocks() {
       '/api/settings/research-day': { research_day: 'tuesday' },
       '/api/time-preferences/heatmap': {},
       '/api/settings/application-closing-time': { is_closed: false },
+      '/api/settings/time-slot-offset': { time_slot_offset: -10 },
     }
     const data = responses[url as string]
     if (data !== undefined) return Promise.resolve({ data })

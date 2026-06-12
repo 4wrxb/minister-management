@@ -54,31 +54,56 @@ export function formatTimeInTimezone(utcHHMM: string, timezone: string): string 
   }).format(date);
 }
 
+export const VALID_SLOT_OFFSETS = [-20, -15, -10, 0] as const;
+export const DEFAULT_SLOT_OFFSET = -10;
+export type SlotOffset = (typeof VALID_SLOT_OFFSETS)[number];
+
 /**
- * Generate the 49 assignment time slots (23:50 through 23:50+).
- * These are 30-minute slots starting at 23:50 UTC (previous day)
- * through 23:50 UTC (end of day), covering ~24.5 hours.
+ * Generate the ordered list of assignment slot identifiers for the given offset
+ * in minutes from each half-hour boundary.
+ *
+ *   offset  0 → 48 slots aligned to the hour: 00:00, 00:30, ..., 23:30
+ *   offset -10 → 49 slots: 23:50 (pre-day), 00:20, ..., 23:20, 23:50+ (end-of-day)
+ *   offset -15 → 49 slots: 23:45, 00:15, ..., 23:15, 23:45+
+ *   offset -20 → 49 slots: 23:40, 00:10, ..., 23:10, 23:40+
+ *
+ * End-of-day slots carry a trailing "+" so they don't collide with the pre-day
+ * slot, which has the same HH:MM but logically belongs to the previous day.
  */
-export function generateAssignmentSlots(): string[] {
-  const slots: string[] = ['23:50'];
-  let hour = 0;
-  let minute = 20;
-  // 49 total slots: leading '23:50' plus 48 half-hour entries from 00:20 to 23:50+.
-  // The inner `break` is the real termination; the loop bound is a safety upper limit.
-  while (slots.length < 49) {
-    const slot = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-    if (slot === '23:50') {
-      slots.push('23:50+'); // End-of-day 23:50 slot (distinct from the pre-midnight one)
-      break;
+export function generateAssignmentSlots(offsetMin: number = DEFAULT_SLOT_OFFSET): string[] {
+  const pad = (n: number) => n.toString().padStart(2, '0');
+
+  if (offsetMin === 0) {
+    const slots: string[] = [];
+    for (let h = 0; h < 24; h++) {
+      slots.push(`${pad(h)}:00`);
+      slots.push(`${pad(h)}:30`);
     }
-    slots.push(slot);
-    minute += 30;
-    if (minute >= 60) {
-      minute -= 60;
-      hour += 1;
-    }
+    return slots;
   }
+
+  const base = ((offsetMin % 30) + 30) % 30;
+  const second = base + 30;
+
+  const slots: string[] = [`23:${pad(second)}`];
+  for (let h = 0; h < 23; h++) {
+    slots.push(`${pad(h)}:${pad(base)}`);
+    slots.push(`${pad(h)}:${pad(second)}`);
+  }
+  slots.push(`23:${pad(base)}`);
+  slots.push(`23:${pad(second)}+`);
   return slots;
+}
+
+/**
+ * Render the user-facing label for a slot ID. End-of-day slots stored with a
+ * trailing "+" become "HH:MM (+1d)" so the cross-midnight nature is visible.
+ */
+export function displaySlotId(slotId: string): string {
+  if (slotId.endsWith('+')) {
+    return `${slotId.slice(0, -1)} (+1d)`;
+  }
+  return slotId;
 }
 
 /**

@@ -19,7 +19,12 @@ from database import (
     init_db, get_all_players, get_player_by_fid,
     save_player, delete_player, calculate_points, get_db,
     get_research_day, get_show_fire_crystals, set_setting, get_setting,
-    get_time_preference_counts
+    get_time_preference_counts,
+    get_time_slot_offset, set_time_slot_offset,
+)
+from slots import (
+    VALID_SLOT_OFFSETS, slot_ids, matching_slots_for_hour, display_slot_id,
+    slot_id_to_index, slot_index_to_id, slot_mapping,
 )
 import json
 
@@ -322,6 +327,37 @@ def set_fire_crystals_setting():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/settings/time-slot-offset', methods=['GET'])
+def get_time_slot_offset_setting():
+    """Get the slot offset (minutes) the app uses to generate 30-min slots."""
+    return jsonify({
+        'time_slot_offset': get_time_slot_offset(),
+        'valid_offsets': list(VALID_SLOT_OFFSETS),
+    }), 200
+
+
+@app.route('/api/admin/settings/time-slot-offset', methods=['PUT'])
+def set_time_slot_offset_setting():
+    """Change the slot offset. Allowed values: -20, -15, -10, 0."""
+    try:
+        auth_error = check_admin_auth()
+        if auth_error:
+            return auth_error
+
+        data = request.json or {}
+        if 'time_slot_offset' not in data:
+            return jsonify({'error': 'time_slot_offset is required'}), 400
+
+        try:
+            offset = set_time_slot_offset(data['time_slot_offset'])
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+
+        return jsonify({'success': True, 'time_slot_offset': offset}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/admin/settings/application-closing-time', methods=['PUT'])
 def set_closing_time_setting():
     """Set or clear application closing time."""
@@ -487,27 +523,17 @@ def auto_assign():
         # Sort by points (descending)
         players.sort(key=lambda p: p['points'], reverse=True)
 
-        # Generate 30-minute time slots starting at 23:50 (previous day)
-        # through 23:50+ (end of day), covering ~24.5 hours.
-        # Slots: 23:50, 00:20, 00:50, 01:20, ..., 23:20, 23:50+
-        time_slots = ['23:50']
-        hour, minute = 0, 20
-        while True:
-            slot = f"{hour:02d}:{minute:02d}"
-            if slot == '23:50':
-                time_slots.append('23:50+')
-                break
-            time_slots.append(slot)
-            minute += 30
-            if minute >= 60:
-                minute -= 60
-                hour += 1
+        # Generate the slot grid for the configured offset.
+        # Default offset is -10, which yields the same 49-slot end-of-day-anchored
+        # layout the app used to hardcode: ['23:50', '00:20', ..., '23:50+'].
+        slot_offset = get_time_slot_offset()
+        time_slots = slot_ids(slot_offset)
 
         # Fetch sticky assignments BEFORE clearing
         db = get_db()
         cursor = db.cursor()
         cursor.execute('''
-            SELECT a.player_id, a.time_slot, p.fid, p.game_name,
+            SELECT a.player_id, a.slot_index, p.fid, p.game_name,
                    p.avatar_image, p.stove_lv, p.stove_lv_content, p.alliance,
                    p.construction_speedups_days, p.research_speedups_days,
                    p.troop_training_speedups_days, p.general_speedups_days,
@@ -517,12 +543,25 @@ def auto_assign():
             WHERE a.day = ? AND a.is_sticky = 1
         ''', (day,))
         sticky_rows = cursor.fetchall()
-        sticky_slots = {}  # time_slot -> player data
+        sticky_slots = {}  # slot_id (string) -> player data
         sticky_player_ids = set()
         for row in sticky_rows:
             row_dict = dict(row)
             row_dict['points'] = calculate_points(row_dict, day)
-            sticky_slots[row['time_slot']] = {
+            slot_str = slot_index_to_id(row['slot_index'], slot_offset)
+            if slot_str is None:
+                # Orphaned sticky row — slot_index doesn't map under the
+                # currently configured offset (for example offset was lowered
+                # from -10 to 0 and a slot_index=48 row was left behind).
+                # Skip rather than 500; the row stays in storage so the admin
+                # can recover by reverting the offset.
+                logger.warning(
+                    "Skipping sticky assignment for player_id=%s day=%s: "
+                    "slot_index=%s is out of range for offset=%s",
+                    row['player_id'], day, row['slot_index'], slot_offset,
+                )
+                continue
+            sticky_slots[slot_str] = {
                 'id': row['player_id'],
                 'player_id': row['player_id'],
                 'fid': row['fid'],
@@ -554,29 +593,14 @@ def auto_assign():
             time_slots_by_day = player.get('time_slots_by_day', {})
             player_time_prefs = set(time_slots_by_day.get(day_type, player.get('time_slots', [])))
 
-            # Find matching 30-min slots for player's hourly preferences
-            # With ±20 min tolerance, each hour H maps to 3 slots:
-            #   (H-1):50  — starts 10 min before the hour (within 20 min)
-            #   H:20      — starts 20 min after the hour (within 20 min)
-            #   H:50      — within the selected hour
+            # Find matching 30-min slots for player's hourly preferences.
+            # For non-zero offsets this is 3 slots per hour (±20 min tolerance);
+            # for offset 0 it is the two aligned half-hour slots.
             matching_slots = []
             for pref in player_time_prefs:
                 if ':' in pref:
                     h = int(pref.split(':')[0])
-                    prev_h = (h - 1) % 24
-                    # Previous hour's :50 slot
-                    if h == 0:
-                        matching_slots.append('23:50')  # The pre-midnight slot
-                    else:
-                        matching_slots.append(f"{prev_h:02d}:50")
-                    # Current hour's :20 and :50 slots
-                    matching_slots.append(f"{h:02d}:20")
-                    # For hour 23, the :50 slot is "23:50+" (end of day),
-                    # NOT "23:50" which is the pre-midnight slot (previous day)
-                    if h == 23:
-                        matching_slots.append('23:50+')
-                    else:
-                        matching_slots.append(f"{h:02d}:50")
+                    matching_slots.extend(matching_slots_for_hour(h, slot_offset))
 
             assigned = False
             for slot in matching_slots:
@@ -614,13 +638,17 @@ def auto_assign():
         # Clear existing non-sticky assignments for this day, then clear sticky too (we'll re-insert all)
         cursor.execute('DELETE FROM assignments WHERE day = ?', (day,))
 
-        # Save new assignments (including sticky ones)
+        # Save new assignments (including sticky ones). Convert slot ID strings
+        # back to numerical indices on write so the schema is offset-independent.
         for time_slot, slot_players in assignments.items():
+            slot_idx = slot_id_to_index(time_slot, slot_offset)
+            if slot_idx is None:
+                continue
             for position, player in enumerate(slot_players):
                 cursor.execute('''
-                    INSERT INTO assignments (player_id, day, time_slot, position, is_assigned, is_sticky)
+                    INSERT INTO assignments (player_id, day, slot_index, position, is_assigned, is_sticky)
                     VALUES (?, ?, ?, ?, 1, ?)
-                ''', (player['id'], day, time_slot, position, 1 if player.get('is_sticky') else 0))
+                ''', (player['id'], day, slot_idx, position, 1 if player.get('is_sticky') else 0))
 
         db.commit()
 
@@ -630,7 +658,8 @@ def auto_assign():
         return jsonify({
             'success': True,
             'assignments': assignments,
-            'unassigned': unassigned
+            'unassigned': unassigned,
+            'slot_mapping': slot_mapping(slot_offset),
         }), 200
 
     except Exception as e:
@@ -646,11 +675,12 @@ def get_assignments(day):
         if auth_error:
             return auth_error
 
+        slot_offset = get_time_slot_offset()
         db = get_db()
         cursor = db.cursor()
         cursor.execute('''
             SELECT
-                a.id, a.time_slot, a.position, a.is_assigned, a.is_sticky,
+                a.id, a.slot_index, a.position, a.is_assigned, a.is_sticky,
                 p.id as player_id, p.fid, p.game_name,
                 p.construction_speedups_days, p.research_speedups_days,
                 p.troop_training_speedups_days, p.general_speedups_days,
@@ -659,16 +689,19 @@ def get_assignments(day):
             FROM assignments a
             JOIN players p ON a.player_id = p.id
             WHERE a.day = ?
-            ORDER BY a.time_slot, a.position
+            ORDER BY a.slot_index, a.position
         ''', (day.lower(),))
 
         rows = cursor.fetchall()
         assignments = {}
         for row in rows:
-            slot = row['time_slot']
+            slot = slot_index_to_id(row['slot_index'], slot_offset)
+            if slot is None:
+                continue
             if slot not in assignments:
                 assignments[slot] = []
             row_dict = dict(row)
+            row_dict['time_slot'] = slot  # back-compat for clients reading the field
             row_dict['points'] = calculate_points(row_dict, day.lower())
             assignments[slot].append(row_dict)
 
@@ -689,6 +722,29 @@ def update_assignments():
         data = request.json
         day = data.get('day')
         assignments = data.get('assignments', {})
+        slot_offset = get_time_slot_offset()
+
+        slot_indices_by_id = {}
+        invalid_slots = []
+        for time_slot, slot_players in assignments.items():
+            if not slot_players:
+                continue
+            slot_idx = slot_id_to_index(time_slot, slot_offset)
+            if slot_idx is None:
+                invalid_slots.append(time_slot)
+            else:
+                slot_indices_by_id[time_slot] = slot_idx
+
+        if invalid_slots:
+            logger.warning(
+                "Rejected assignment update for day=%s at offset=%s due to invalid slot IDs: %s",
+                day, slot_offset, invalid_slots,
+            )
+            return jsonify({
+                'error': 'Invalid time slot(s) for current offset',
+                'invalid_slots': invalid_slots,
+                'time_slot_offset': slot_offset,
+            }), 400
 
         db = get_db()
         cursor = db.cursor()
@@ -698,14 +754,16 @@ def update_assignments():
 
         # Save new assignments (enforce max 1 player per slot)
         for time_slot, slot_players in assignments.items():
-            if slot_players:
-                player = slot_players[0]  # Only take first player per slot
-                cursor.execute('''
-                    INSERT INTO assignments (player_id, day, time_slot, position, is_assigned, is_sticky)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (player['player_id'], day, time_slot, 0,
-                      player.get('is_assigned', True),
-                      1 if player.get('is_sticky') else 0))
+            if not slot_players:
+                continue
+            slot_idx = slot_indices_by_id[time_slot]
+            player = slot_players[0]  # Only take first player per slot
+            cursor.execute('''
+                INSERT INTO assignments (player_id, day, slot_index, position, is_assigned, is_sticky)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (player['player_id'], day, slot_idx, 0,
+                  player.get('is_assigned', True),
+                  1 if player.get('is_sticky') else 0))
 
         db.commit()
 
@@ -730,6 +788,8 @@ def export_assignments():
         header_font = Font(bold=True, color="FFFFFF")
         separator_fill = PatternFill(start_color="F4B942", end_color="F4B942", fill_type="solid")
         separator_font = Font(bold=True, color="000000")
+
+        slot_offset = get_time_slot_offset()
 
         headers = [
             'Time Slot', 'FID', 'Alliance', 'Game Name',
@@ -764,11 +824,11 @@ def export_assignments():
 
             # Get assigned players
             cursor.execute('''
-                SELECT a.time_slot, p.*
+                SELECT a.slot_index, p.*
                 FROM assignments a
                 JOIN players p ON a.player_id = p.id
                 WHERE a.day = ? AND a.is_assigned = 1
-                ORDER BY a.time_slot, a.position
+                ORDER BY a.slot_index, a.position
             ''', (day_key,))
 
             assigned_rows = cursor.fetchall()
@@ -778,8 +838,9 @@ def export_assignments():
                 player = dict(row)
                 assigned_player_ids.add(player['id'])
                 points = calculate_points(player, day_key)
+                slot_str = slot_index_to_id(row['slot_index'], slot_offset) or ''
                 ws.append([
-                    '23:50 (+1d)' if row['time_slot'] == '23:50+' else row['time_slot'],
+                    display_slot_id(slot_str),
                     player['fid'],
                     player.get('alliance', ''),
                     player['game_name'],
@@ -905,20 +966,23 @@ def get_published_schedule(day):
         if day.lower() not in days_list:
             return jsonify({'published': False}), 200
 
+        slot_offset = get_time_slot_offset()
         db = get_db()
         cursor = db.cursor()
         cursor.execute('''
-            SELECT a.time_slot, p.game_name, p.alliance
+            SELECT a.slot_index, p.game_name, p.alliance
             FROM assignments a
             JOIN players p ON a.player_id = p.id
             WHERE a.day = ? AND a.is_assigned = 1
-            ORDER BY a.time_slot, a.position
+            ORDER BY a.slot_index, a.position
         ''', (day.lower(),))
 
         rows = cursor.fetchall()
         assignments = {}
         for row in rows:
-            slot = row['time_slot']
+            slot = slot_index_to_id(row['slot_index'], slot_offset)
+            if slot is None:
+                continue
             if slot not in assignments:
                 assignments[slot] = []
             assignments[slot].append({
@@ -938,6 +1002,7 @@ def get_published_schedule(day):
             'day': day.lower(),
             'day_label': day_labels.get(day.lower(), day),
             'assignments': assignments,
+            'slot_mapping': slot_mapping(slot_offset),
         }), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -991,23 +1056,30 @@ def get_player_assignments(fid):
         if not player:
             return jsonify({'error': 'Player not found'}), 404
 
+        slot_offset = get_time_slot_offset()
         db = get_db()
         cursor = db.cursor()
         cursor.execute('''
-            SELECT day, time_slot
+            SELECT day, slot_index
             FROM assignments
             WHERE player_id = ? AND is_assigned = 1
-            ORDER BY day, time_slot
+            ORDER BY day, slot_index
         ''', (player['id'],))
 
         assignments = {}
         for row in cursor.fetchall():
             day = row['day']
+            slot = slot_index_to_id(row['slot_index'], slot_offset)
+            if slot is None:
+                continue
             if day not in assignments:
                 assignments[day] = []
-            assignments[day].append({'time_slot': row['time_slot']})
+            assignments[day].append({'time_slot': slot})
 
-        return jsonify({'assignments': assignments}), 200
+        return jsonify({
+            'assignments': assignments,
+            'slot_mapping': slot_mapping(slot_offset),
+        }), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

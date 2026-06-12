@@ -1,6 +1,17 @@
 import sqlite3
 import os
+import logging
 from flask import g
+
+from slots import (
+    VALID_SLOT_OFFSETS,
+    DEFAULT_SLOT_OFFSET,
+    hour_to_index,
+    index_to_hour_str,
+    slot_id_to_index,
+)
+
+logger = logging.getLogger(__name__)
 
 # Database path - set via DATABASE_PATH env var
 DB_PATH = os.environ.get('DATABASE_PATH', '/data/minister.db')
@@ -59,30 +70,39 @@ def init_db(app):
             )
         ''')
 
-        # Time preferences table (with day_type for per-day preferences)
+        # Time preferences table
+        #
+        # Stores each player's preferred hour as a 0..23 integer (``hour_index``)
+        # rather than a "HH:MM" string so the schema stays stable regardless of
+        # which slot offset is configured. Older databases that still have a
+        # ``time_slot TEXT`` column are migrated below.
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS time_preferences (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 player_id INTEGER NOT NULL,
-                time_slot TEXT NOT NULL,
+                hour_index INTEGER NOT NULL,
                 day_type TEXT NOT NULL DEFAULT 'construction',
                 FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE,
-                UNIQUE(player_id, time_slot, day_type)
+                UNIQUE(player_id, hour_index, day_type)
             )
         ''')
 
         # Assignments table
+        #
+        # Stores each placement as a numerical ``slot_index`` into the slot grid
+        # produced by ``slot_ids(time_slot_offset)``. Older databases that still
+        # have a ``time_slot TEXT`` column are migrated below.
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS assignments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 player_id INTEGER NOT NULL,
                 day TEXT NOT NULL,
-                time_slot TEXT NOT NULL,
+                slot_index INTEGER NOT NULL,
                 position INTEGER DEFAULT 0,
                 is_assigned BOOLEAN DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE,
-                UNIQUE(day, time_slot, position)
+                UNIQUE(day, slot_index, position)
             )
         ''')
 
@@ -131,8 +151,8 @@ def init_db(app):
         # Check if the day_type column exists
         cursor.execute("PRAGMA table_info(time_preferences)")
         columns = [col['name'] for col in cursor.fetchall()]
-        if 'day_type' not in columns:
-            # Recreate table with day_type and new unique constraint
+        if 'day_type' not in columns and 'time_slot' in columns:
+            # Legacy schema (pre-day_type) — recreate with day_type and new unique constraint
             cursor.execute('ALTER TABLE time_preferences RENAME TO time_preferences_old')
             cursor.execute('''
                 CREATE TABLE time_preferences (
@@ -159,8 +179,10 @@ def init_db(app):
             ''')
             cursor.execute('DROP TABLE time_preferences_old')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_time_prefs_player ON time_preferences(player_id)')
-        else:
-            # Fix unique constraint: ensure it includes day_type (not just player_id, time_slot)
+        elif 'time_slot' in columns:
+            # day_type already present; fix unique constraint if it predates day_type.
+            # (Skip entirely on the new hour_index schema — there is no time_slot
+            # column to project.)
             cursor.execute("SELECT sql FROM sqlite_master WHERE name='time_preferences'")
             create_sql = cursor.fetchone()
             if create_sql and 'UNIQUE(player_id, time_slot, day_type)' not in create_sql['sql']:
@@ -187,7 +209,130 @@ def init_db(app):
                         pass  # Skip duplicates
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_time_prefs_player ON time_preferences(player_id)')
 
+        # === Numerical slot indexing migration ===
+        #
+        # Convert legacy schemas that still store time slots as "HH:MM" strings
+        # into integer-indexed columns. Run AFTER the day_type / unique-rebuild
+        # migrations above so the source table has the expected shape.
+        current_offset = get_time_slot_offset()
+        _migrate_time_preferences_to_hour_index(cursor)
+        _migrate_assignments_to_slot_index(cursor, current_offset)
+
         db.commit()
+
+
+def _migrate_time_preferences_to_hour_index(cursor):
+    """Convert ``time_preferences.time_slot TEXT`` to ``hour_index INTEGER``."""
+    cursor.execute("PRAGMA table_info(time_preferences)")
+    columns = [c['name'] for c in cursor.fetchall()]
+    if 'hour_index' in columns or 'time_slot' not in columns:
+        return  # already migrated or schema is unrelated
+
+    logger.info("Migrating time_preferences.time_slot → hour_index")
+    cursor.execute('ALTER TABLE time_preferences RENAME TO time_preferences_old_numidx')
+    cursor.execute('''
+        CREATE TABLE time_preferences (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id INTEGER NOT NULL,
+            hour_index INTEGER NOT NULL,
+            day_type TEXT NOT NULL DEFAULT 'construction',
+            FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE,
+            UNIQUE(player_id, hour_index, day_type)
+        )
+    ''')
+
+    cursor.execute('SELECT player_id, time_slot, day_type FROM time_preferences_old_numidx')
+    skipped = 0
+    for row in cursor.fetchall():
+        idx = hour_to_index(row['time_slot'])
+        if idx is None:
+            logger.warning(
+                "Skipping unmappable time_preferences row: player_id=%s time_slot=%r day_type=%s",
+                row['player_id'], row['time_slot'], row['day_type'],
+            )
+            skipped += 1
+            continue
+        cursor.execute(
+            'INSERT OR IGNORE INTO time_preferences (player_id, hour_index, day_type) VALUES (?, ?, ?)',
+            (row['player_id'], idx, row['day_type']),
+        )
+
+    cursor.execute('DROP TABLE time_preferences_old_numidx')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_time_prefs_player ON time_preferences(player_id)')
+    # NOTE: use the cursor directly rather than set_setting() — set_setting
+    # calls db.commit(), which would break the single-transaction guarantee
+    # of the migration. The marker becomes durable when init_db() commits.
+    cursor.execute(
+        'INSERT INTO settings (key, value) VALUES (?, ?) '
+        'ON CONFLICT(key) DO UPDATE SET value = ?',
+        ('numerical_slot_indexing_v1', '1', '1'),
+    )
+    if skipped:
+        logger.warning("Skipped %d unmappable time_preferences rows during migration", skipped)
+
+
+def _migrate_assignments_to_slot_index(cursor, offset):
+    """Convert ``assignments.time_slot TEXT`` to ``slot_index INTEGER``."""
+    cursor.execute("PRAGMA table_info(assignments)")
+    columns = [c['name'] for c in cursor.fetchall()]
+    if 'slot_index' in columns or 'time_slot' not in columns:
+        return  # already migrated or schema is unrelated
+
+    logger.info("Migrating assignments.time_slot → slot_index (offset=%s)", offset)
+    cursor.execute('ALTER TABLE assignments RENAME TO assignments_old_numidx')
+    cursor.execute('''
+        CREATE TABLE assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_id INTEGER NOT NULL,
+            day TEXT NOT NULL,
+            slot_index INTEGER NOT NULL,
+            position INTEGER DEFAULT 0,
+            is_assigned BOOLEAN DEFAULT 1,
+            is_sticky BOOLEAN DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE,
+            UNIQUE(day, slot_index, position)
+        )
+    ''')
+
+    # Old schema may or may not have is_sticky depending on which migration was
+    # last applied — read with a defensive COALESCE.
+    cursor.execute("PRAGMA table_info(assignments_old_numidx)")
+    old_cols = {c['name'] for c in cursor.fetchall()}
+    sticky_expr = 'is_sticky' if 'is_sticky' in old_cols else '0 AS is_sticky'
+    cursor.execute(
+        f'SELECT player_id, day, time_slot, position, is_assigned, {sticky_expr} '
+        'FROM assignments_old_numidx'
+    )
+    skipped = 0
+    for row in cursor.fetchall():
+        idx = slot_id_to_index(row['time_slot'], offset)
+        if idx is None:
+            logger.warning(
+                "Skipping unmappable assignments row: player_id=%s day=%s time_slot=%r (offset=%s has no such slot)",
+                row['player_id'], row['day'], row['time_slot'], offset,
+            )
+            skipped += 1
+            continue
+        cursor.execute(
+            'INSERT OR IGNORE INTO assignments (player_id, day, slot_index, position, is_assigned, is_sticky) '
+            'VALUES (?, ?, ?, ?, ?, ?)',
+            (row['player_id'], row['day'], idx, row['position'],
+             row['is_assigned'], row['is_sticky']),
+        )
+
+    cursor.execute('DROP TABLE assignments_old_numidx')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_assignments_day ON assignments(day)')
+    # NOTE: use the cursor directly rather than set_setting() — set_setting
+    # calls db.commit(), which would break the single-transaction guarantee
+    # of the migration. The marker becomes durable when init_db() commits.
+    cursor.execute(
+        'INSERT INTO settings (key, value) VALUES (?, ?) '
+        'ON CONFLICT(key) DO UPDATE SET value = ?',
+        ('numerical_slot_indexing_v1', '1', '1'),
+    )
+    if skipped:
+        logger.warning("Skipped %d unmappable assignments rows during migration", skipped)
 
 
 def get_setting(key, default=None):
@@ -218,6 +363,40 @@ def get_research_day():
 def get_show_fire_crystals():
     """Get whether fire crystal fields should be shown."""
     return get_setting('show_fire_crystals', 'false') == 'true'
+
+
+def get_time_slot_offset():
+    """Get the configured slot offset in minutes (one of VALID_SLOT_OFFSETS).
+
+    Returns DEFAULT_SLOT_OFFSET if the setting is missing or stored as an
+    unsupported value (e.g. a leftover from a misconfigured deployment).
+    """
+    raw = get_setting('time_slot_offset', None)
+    if raw is None:
+        return DEFAULT_SLOT_OFFSET
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_SLOT_OFFSET
+    if value not in VALID_SLOT_OFFSETS:
+        return DEFAULT_SLOT_OFFSET
+    return value
+
+
+def set_time_slot_offset(value):
+    """Persist the slot offset setting. Raises ValueError on invalid input."""
+    try:
+        value = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"time_slot_offset must be an integer in {VALID_SLOT_OFFSETS}"
+        ) from exc
+    if value not in VALID_SLOT_OFFSETS:
+        raise ValueError(
+            f"time_slot_offset must be one of {VALID_SLOT_OFFSETS}"
+        )
+    set_setting('time_slot_offset', str(value))
+    return value
 
 
 def calculate_points(player, day):
@@ -257,7 +436,11 @@ def calculate_points(player, day):
 
 
 def get_all_players():
-    """Get all players with their time preferences per day type."""
+    """Get all players with their time preferences per day type.
+
+    The DB stores ``hour_index`` integers but the API contract returns
+    ``time_slots`` as ``"HH:00"`` strings, so we project on read.
+    """
     db = get_db()
     cursor = db.cursor()
     cursor.execute('SELECT * FROM players ORDER BY created_at DESC')
@@ -266,14 +449,15 @@ def get_all_players():
         player = dict(row)
         # Get time preferences grouped by day_type
         cursor2 = db.cursor()
-        cursor2.execute('SELECT time_slot, day_type FROM time_preferences WHERE player_id = ?', (player['id'],))
+        cursor2.execute('SELECT hour_index, day_type FROM time_preferences WHERE player_id = ?', (player['id'],))
         time_prefs = {'construction': [], 'research': [], 'troop': []}
         all_slots = set()
         for tp in cursor2.fetchall():
             day_type = tp['day_type']
+            time_str = index_to_hour_str(tp['hour_index'])
             if day_type in time_prefs:
-                time_prefs[day_type].append(tp['time_slot'])
-            all_slots.add(tp['time_slot'])
+                time_prefs[day_type].append(time_str)
+            all_slots.add(time_str)
         player['time_slots'] = list(all_slots)  # backward compat
         player['time_slots_by_day'] = time_prefs
         players.append(player)
@@ -289,14 +473,15 @@ def get_player_by_fid(fid):
     if row:
         player = dict(row)
         # Get time preferences grouped by day_type
-        cursor.execute('SELECT time_slot, day_type FROM time_preferences WHERE player_id = ?', (player['id'],))
+        cursor.execute('SELECT hour_index, day_type FROM time_preferences WHERE player_id = ?', (player['id'],))
         time_prefs = {'construction': [], 'research': [], 'troop': []}
         all_slots = set()
         for tp in cursor.fetchall():
             day_type = tp['day_type']
+            time_str = index_to_hour_str(tp['hour_index'])
             if day_type in time_prefs:
-                time_prefs[day_type].append(tp['time_slot'])
-            all_slots.add(tp['time_slot'])
+                time_prefs[day_type].append(time_str)
+            all_slots.add(time_str)
         player['time_slots'] = list(all_slots)  # backward compat
         player['time_slots_by_day'] = time_prefs
         return player
@@ -383,23 +568,28 @@ def save_player(data, time_slots):
         ))
         player_id = cursor.lastrowid
 
-    # Insert time preferences
+    # Insert time preferences. We accept either string ("HH:00") or integer
+    # hour values from callers; everything is normalized to hour_index on
+    # write so the storage layer is offset-independent.
+    def _insert_pref(pid, raw, day_type):
+        idx = hour_to_index(raw)
+        if idx is None:
+            return
+        cursor.execute('''
+            INSERT OR IGNORE INTO time_preferences (player_id, hour_index, day_type)
+            VALUES (?, ?, ?)
+        ''', (pid, idx, day_type))
+
     if isinstance(time_slots, dict):
         # Per-day time slots: {'construction': [...], 'research': [...], 'troop': [...]}
         for day_type, slots in time_slots.items():
             for time_slot in slots:
-                cursor.execute('''
-                    INSERT INTO time_preferences (player_id, time_slot, day_type)
-                    VALUES (?, ?, ?)
-                ''', (player_id, time_slot, day_type))
+                _insert_pref(player_id, time_slot, day_type)
     else:
         # Legacy: same slots for all day types
         for time_slot in time_slots:
             for day_type in ('construction', 'research', 'troop'):
-                cursor.execute('''
-                    INSERT INTO time_preferences (player_id, time_slot, day_type)
-                    VALUES (?, ?, ?)
-                ''', (player_id, time_slot, day_type))
+                _insert_pref(player_id, time_slot, day_type)
 
     db.commit()
     return player_id
@@ -408,19 +598,22 @@ def save_player(data, time_slots):
 def get_time_preference_counts():
     """Get count of players preferring each time slot, grouped by day_type.
     Returns: { 'construction': {'00:00': 3, ...}, 'research': {...}, 'troop': {...} }
+
+    Counts are stored against ``hour_index`` and projected back to ``"HH:00"``
+    strings for backward compatibility with the heatmap UI.
     """
     db = get_db()
     cursor = db.cursor()
     cursor.execute('''
-        SELECT day_type, time_slot, COUNT(*) as count
+        SELECT day_type, hour_index, COUNT(*) as count
         FROM time_preferences
-        GROUP BY day_type, time_slot
+        GROUP BY day_type, hour_index
     ''')
     result = {'construction': {}, 'research': {}, 'troop': {}}
     for row in cursor.fetchall():
         day_type = row['day_type']
         if day_type in result:
-            result[day_type][row['time_slot']] = row['count']
+            result[day_type][index_to_hour_str(row['hour_index'])] = row['count']
     return result
 
 
