@@ -703,6 +703,8 @@ jobs:
          github.event.inputs.teardown_staging_on_production == 'true' &&
          needs.deploy-production.result == 'success')
       )
+    permissions:
+      deployments: write
     steps:
       - name: Azure login
         uses: azure/login@v1
@@ -719,6 +721,26 @@ jobs:
           else
             echo "Staging RG not found; nothing to delete."
           fi
+
+      - name: Mark staging GitHub environment as inactive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          DEPLOYMENTS=$(gh api "repos/${{ github.repository }}/deployments" \
+            --jq '[.[] | select(.environment == "staging") | .id]')
+          COUNT=$(echo "$DEPLOYMENTS" | jq 'length')
+          if [ "$COUNT" -eq 0 ]; then
+            echo "No active staging deployments found in GitHub — nothing to deactivate."
+            exit 0
+          fi
+          echo "$DEPLOYMENTS" | jq -r '.[]' | while read -r DEPLOY_ID; do
+            gh api "repos/${{ github.repository }}/deployments/${DEPLOY_ID}/statuses" \
+              --method POST \
+              --field state=inactive \
+              --silent
+            echo "✓ Marked GitHub deployment $DEPLOY_ID (staging) as inactive"
+          done
 
   # ─── Cleanup Production Cost Drivers ─────────────────────────────
   cleanup-production:
