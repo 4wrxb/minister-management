@@ -276,7 +276,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: [validate-config, validate-bicep]
     if: ${{ github.event.inputs.action == 'deploy' }}
-    environment: azure
     outputs:
       rg-created: ${{ steps.check-rg.outputs.created }}
     steps:
