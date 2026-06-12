@@ -728,7 +728,7 @@ jobs:
         run: |
           set -euo pipefail
           DEPLOYMENTS=$(gh api --paginate "repos/${{ github.repository }}/deployments?environment=staging" \
-            --jq '[.[] | .id]')
+            | jq -s 'map(.[]?.id)')
           COUNT=$(echo "$DEPLOYMENTS" | jq 'length')
           if [ "$COUNT" -eq 0 ]; then
             echo "No active staging deployments found in GitHub — nothing to deactivate."
