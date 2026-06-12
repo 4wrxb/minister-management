@@ -23,6 +23,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New PR feedback timeline: <2 min for syntax/type checks, ~5 min for unit tests, ~25 min for full Docker integration test. Total: ~30 min.
 - Copilot/Claude guidance now requires future changes to finish the related user-facing docs, internal docs/changelog, and the best-fit unit or Playwright E2E tests before the work is considered complete.
 - `claude.md` remains the detailed project primer, while `.github/copilot-instructions.md` is the repo-level source of truth for validation and completion rules.
+- **Azure Container Apps deployment workflow (`deploy-aca.yml`) now follows a manual-first staged lifecycle**:
+  - Staging deploy seeds `minister.db` from a production snapshot before deploying.
+  - Production deploy now creates and logs a rollback backup blob, then can tear down staging to a zero-cost state (`teardown_staging_on_production=true` by default).
+  - Added explicit `rollback`, `destroy`, and `cleanup` action paths:
+    - `rollback` restores production DB from a named backup blob (`backup_blob_name`).
+    - `destroy` deletes staging resource group.
+    - `cleanup` prunes old production backup blobs (`backup_retention_days`).
+  - Deployment docs were aligned in `.github/DEPLOYMENT_WORKFLOW.md`, `DEPLOYMENT.md`, and `README.md`.
+  - Follow-up deploy workflow refinements from PR review:
+    - `build-image` and GHCR visibility checks now run only for `action=deploy`.
+    - Staging now runs a storage-only Bicep bootstrap before DB seed, so seed no longer depends on pre-existing staging storage.
+    - When production deploy requests staging teardown, teardown failure now fails the overall run.
+  - **Critical fix: First-time production deploy now works correctly**:
+    - Backup step detects if `main-deployment` exists before attempting backup; skips gracefully on first deploy.
+    - Added comprehensive troubleshooting guide in `DEPLOYMENT.md` for state progression and recovery scenarios.
+  - Removed `force_bootstrap` workflow input and guardrails; bootstrap now runs only for `action=deploy`.
+  - Staging DB seed is now automatic best-effort behavior: it warns and exits successfully when production RG, production `main-deployment`, or production `minister.db` is missing.
+  - Production deploy Bicep parameters now use valid `minReplicas`/`maxReplicas` names.
+- Fixed Azure storage account naming in Bicep so production names always satisfy the 24-character limit while preserving staging naming behavior.
+- Production cleanup now resolves storage accounts deterministically from `main-deployment` outputs (no fallback to listing storage accounts).
 
 ## [1.4.0] — 2026-06-11
 

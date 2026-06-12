@@ -584,7 +584,7 @@ az webapp restart -g $RG -n $APP
 
 ## Option 5: Azure Container Apps (Automated)
 
-This option deploys the app to **Azure Container Apps** using a **GitHub Actions workflow** with **Bicep infrastructure-as-code**, offering automated staging→production deployments, database backup/restore, and health-check-based rollback.
+This option deploys the app to **Azure Container Apps** using a **GitHub Actions workflow** with **Bicep infrastructure-as-code**, offering manual-first staging→production deployments, production backup/rollback points, and explicit cleanup/teardown runs.
 
 ### Architecture
 
@@ -592,25 +592,26 @@ This option deploys the app to **Azure Container Apps** using a **GitHub Actions
 GitHub Actions Workflow (config-driven)
     ├─ Validate Bicep & run tests
     ├─ Build & push image to GHCR
-    ├─ Bootstrap resources (if needed)
+    ├─ Bootstrap resource groups (if needed)
     ├─ Deploy to staging
-    │   ├─ Backup database
+    │   ├─ Seed DB from production snapshot
     │   ├─ Deploy Container App
     │   ├─ Health check (5 min timeout)
-    │   └─ E2E tests
+    │   └─ Smoke tests
     ├─ Manual approval gate
     └─ Deploy to production
         ├─ Backup database
         ├─ Deploy Container App
-        ├─ Health check & auto-rollback
-        └─ Post-deployment validation
+        ├─ Health check
+        ├─ Optional staging teardown (zero-cost)
+        └─ Post-deployment validation + rollback pointer
 ```
 
 This pattern is ideal for small-scale apps (<1000 users/day) that need:
 
 - ✅ **Staged rollout** (staging → prod with approval)
-- ✅ **Automated checks** (Bicep validation, test suite, E2E tests, health probes)
-- ✅ **Database safety** (backup before each deploy, auto-rollback on failure)
+- ✅ **Automated checks** (Bicep validation, health probes, smoke tests)
+- ✅ **Database safety** (staging seeded from production snapshot, production backup before deploy, manual rollback support)
 - ✅ **Infrastructure as code** (repeatable, version-controlled deployments)
 - ✅ **Zero-downtime updates** (managed identity, container probes, liveness/readiness)
 
@@ -675,24 +676,25 @@ The workflow will:
 
 1. ✓ Validate Bicep templates
 2. ✓ Build and push Docker image to GitHub Container Registry (smoke + E2E + lint + pytest + vitest are run by `docker-integration.yml` on every push to `main`, so the same SHA being deployed has already passed them — this workflow doesn't repeat them)
-3. ✓ Bootstrap Azure resources (first time only):
-   - Create resource group
-   - Create storage account + file share (SQLite persistence)
-   - Create Container Apps environment
-   - Deploy Container App
-4. ✓ Deploy to staging, run health checks and smoke tests
-5. ✓ Wait for manual approval (if production)
-6. ✓ Deploy to production, auto-rollback if health check fails
+3. ✓ Bootstrap Azure resource groups (first time only)
+4. ✓ Ensure staging storage exists before seeding (storage-only Bicep deployment)
+5. ✓ Seed staging database from current production snapshot
+6. ✓ Deploy or update Azure resources via Bicep (storage account + file share, Container Apps environment, Container App)
+7. ✓ Wait for manual approval (if production)
+8. ✓ Deploy to production and record a rollback backup blob
+9. ✓ Optionally delete staging resource group for zero-cost staging (requested teardown must succeed or the run fails)
 
 ### Workflow Inputs Reference
 
 | Input | Default | Description |
 |-------|---------|-------------|
 | `environment` | `staging` | `staging` or `production` |
-| `action` | `deploy` | `deploy`, `rollback`, or `destroy` |
-| `force_bootstrap` | `false` | Force resource creation (even if RG exists) |
-| `skip_staging` | `false` | Deploy directly to prod (requires approval) |
-| `image_tag` | `latest` | Alias tag pushed to GHCR alongside the commit-SHA tag (e.g. `v1.4.0`). The deploy itself always pins to `:<github.sha>` regardless of this value, so changing it won't trigger a new revision on its own — it just controls which human-friendly tag also points at the new image. |
+| `action` | `deploy` | `deploy`, `rollback`, `destroy`, or `cleanup` |
+| `teardown_staging_on_production` | `true` | Tear down staging after production deploy |
+| `backup_blob_name` | `''` | Required for `action=rollback`; exact production backup blob name |
+| `backup_retention_days` | `7` | For `action=cleanup`; delete production backup blobs older than this many days |
+
+Staging DB seeding is now automatic and best-effort. The seed step logs a warning and skips (without failing deploy) when production RG is missing, production `main-deployment` is missing, or production `minister.db` is missing.
 
 ### Monitoring Deployment
 
@@ -753,10 +755,20 @@ The deploy always pins to `:<github.sha>`, so each commit on `main` produces a u
 **To rollback:**
 
 ```bash
-# Trigger workflow with rollback action
+# Trigger workflow with rollback action and the backup blob from deploy logs
 gh workflow run deploy-aca.yml \
   -f environment=production \
-  -f action=rollback
+  -f action=rollback \
+  -f backup_blob_name=prod-manual-backup-YYYYMMDD-HHMMSS.db
+```
+
+**To clean up costs after production review:**
+
+```bash
+gh workflow run deploy-aca.yml \
+  -f environment=production \
+  -f action=cleanup \
+  -f backup_retention_days=7
 ```
 
 Or manually:
@@ -775,13 +787,13 @@ az containerapp revision activate \
 
 ### Scaling
 
-The Container App auto-scales based on CPU:
+With SQLite on Azure Files, keep the Container App pinned to a single replica:
 
 | Config | Staging | Production |
 |--------|---------|------------|
-| Min instances | 1 | 2 |
-| Max instances | 3 | 5 |
-| Scale trigger | CPU > 70% | CPU > 70% |
+| Min instances | 1 | 1 |
+| Max instances | 1 | 1 |
+| Scale trigger | Disabled (single replica) | Disabled (single replica) |
 
 Adjust in workflow:
 
@@ -789,8 +801,8 @@ Adjust in workflow:
 deploy-production:
   # ... in az deployment group create ...
   --parameters \
-    minInstances=2 \
-    maxInstances=5
+    minReplicas=1 \
+    maxReplicas=1
 ```
 
 ### Troubleshooting
@@ -835,6 +847,43 @@ az containerapp exec \
 **Database locked error:**
 
 Verify `SQLITE_VFS=unix-dotfile` and `journal_mode=DELETE` are set (both configured automatically by Bicep).
+
+**First production deploy fails with "backup" or "storage account" error:**
+
+This is expected on the very first deploy. The workflow tries to backup the current database only when a prior `main-deployment` exists. If nothing has been deployed yet, there is no storage account or database to backup. The backup step skips gracefully and deployment proceeds to create everything.
+
+**To fix a failed first deploy:**
+
+If the workflow fails *before* the Bicep deployment runs (in bootstrap or backup steps), a partial resource group may exist. Simply re-run the workflow:
+
+```bash
+gh workflow run deploy-aca.yml \
+  -f environment=production \
+  -f action=deploy
+```
+
+The workflow will:
+1. Reuse the existing resource group
+2. Skip backup (because `main-deployment` doesn't exist yet)
+3. Deploy via Bicep (creating storage, app, etc.)
+4. Succeed
+
+For staging deploys in the same edge case, production snapshot seeding is now best-effort and auto-skips with warnings if production prerequisites are missing:
+- `minister-rg-production` does not exist
+- `main-deployment` is missing in production
+- production `minister.db` is missing
+
+If you prefer to start completely fresh and the resource group is truly empty:
+
+```bash
+az group delete --name minister-rg-production --yes
+# Then re-run the deploy workflow — it will create a fresh RG
+```
+
+**If you want a complete bootstrap reset (delete and recreate everything):**
+
+1. Manually delete the resource group: `az group delete --name minister-rg-production --yes`
+2. Re-dispatch the workflow normally (`action=deploy`) so bootstrap recreates the RG
 
 ### Documentation
 

@@ -27,7 +27,7 @@ A web application that automates State vs State (SVS) ministry-position scheduli
 - Docker + Docker Compose for local development
 - Multi-stage Docker build (Node build → Python runtime serving built assets from `backend/static/`)
 - Production target is cloud-agnostic; common targets include Google Cloud Run (with GCS FUSE), Azure App Service (multi-container with a Cloudflare Tunnel sidecar, Azure Files for SMB persistence), AWS ECS/Fargate (with EFS), and Azure Container Apps. See `DEPLOYMENT.md`.
-- Azure Container Apps has an automated, config-driven GitHub Actions pipeline: workflow at `.github/workflows/deploy-aca.yml`, Bicep templates in `infra/`, operator guide in `.github/DEPLOYMENT_WORKFLOW.md`. Deploys are pinned to `:<github.sha>` so each commit on `main` produces a new revision; re-dispatching against the same SHA is a no-op.
+- Azure Container Apps has an automated, config-driven GitHub Actions pipeline: workflow at `.github/workflows/deploy-aca.yml`, Bicep templates in `infra/`, operator guide in `.github/DEPLOYMENT_WORKFLOW.md`. The workflow supports manual-first staging/prod operations (`deploy`, `rollback`, `destroy`, `cleanup`) and deploys are pinned to `:<github.sha>` so each commit on `main` produces a new revision; re-dispatching against the same SHA is a no-op.
 
 ## Project Structure
 
@@ -77,7 +77,7 @@ minister_management/
 │   ├── DEPLOYMENT_WORKFLOW.md          # Operator guide for deploy-aca.yml
 │   └── workflows/
 │       ├── copilot-setup-steps.yml
-│       ├── deploy-aca.yml              # Staged Azure Container Apps deploy pipeline
+│       ├── deploy-aca.yml              # Manual-first Azure Container Apps deploy lifecycle
 │       ├── docker-integration.yml      # Required check: smoke + E2E + lint + tests
 │       ├── backend-tests.yml
 │       └── frontend-tests.yml
