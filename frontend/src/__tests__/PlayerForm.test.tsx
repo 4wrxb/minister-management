@@ -29,13 +29,17 @@ vi.mock('react-router-dom', async (importActual) => {
   return { ...actual, useNavigate: () => mockNavigate }
 })
 
-vi.mock('@/utils/timezone', () => ({
+vi.mock('@/lib/localization', () => ({
   getSavedTimezone: () => 'UTC',
   saveTimezone: vi.fn(),
   generatePlayerTimeSlots: () => [],
   formatTimeInTimezone: (t: string) => t,
   getTimezoneAbbr: () => 'UTC',
   TIMEZONES: [],
+}))
+
+vi.mock('@/utils/slotOffset', () => ({
+  getToleranceMinutes: () => 20,
 }))
 
 // ── Startup API mock ───────────────────────────────────────────────────────────
