@@ -35,6 +35,7 @@ A web application for managing ministry assignments during State vs State (SVS) 
 
 ### General
 - **5 Languages** - English, Korean, Chinese, Turkish, Arabic (with RTL support)
+- **Centralized localization** - Frontend uses `frontend/src/lib/localization/` for timezone handling, date formatting, and locale-aware number formatting
 - **Dark Theme** - Navy and gold themed UI
 - **Dockerized** - Multi-stage Docker build for easy deployment
 
@@ -146,29 +147,12 @@ minister_management/
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
-│   │   ├── pages/
-│   │   │   ├── Home.tsx
-│   │   │   ├── PlayerForm.tsx
-│   │   │   ├── UpdateSubmission.tsx
-│   │   │   ├── PublishedSchedule.tsx
-│   │   │   ├── PlayerGuide.tsx
-│   │   │   ├── AdminLogin.tsx
-│   │   │   ├── AdminDashboard.tsx
-│   │   │   └── AdminGuide.tsx
-│   │   ├── components/
-│   │   │   ├── LanguageSelector.tsx
-│   │   │   ├── TimezoneSelector.tsx
-│   │   │   └── admin/
-│   │   │       ├── PlayerManagement.tsx
-│   │   │       ├── AssignmentManagement.tsx
-│   │   │       └── AdminSettings.tsx
-│   │   ├── utils/
-│   │   │   ├── timezone.ts      # 30-min slot generator + tz helpers
-│   │   │   └── affiliate.ts     # LootBar affiliate links
-│   │   ├── i18n.ts              # All translations (en, ko, zh, tr, ar)
-│   │   ├── App.tsx              # Routing
-│   │   ├── main.tsx
-│   │   └── index.css
+│   │   ├── pages/          # Home, PlayerForm, AdminDashboard, PublishedSchedule, etc.
+│   │   ├── components/     # LanguageSelector, admin/ subcomponents (incl. AdminSettings)
+│   │   ├── lib/            # Shared libraries (localization)
+│   │   ├── __tests__/      # Localization unit tests
+│   │   ├── utils/          # Utility modules (affiliate integration, etc.)
+│   │   └── i18n.ts         # All translations
 │   ├── package.json
 │   └── vite.config.ts
 ├── Dockerfile              # Multi-stage build (Node + Python)
@@ -192,6 +176,10 @@ minister_management/
 - [Project Summary](PROJECT_SUMMARY.md) - Technical overview
 - [Recreation Guide](RECREATION_GUIDE.md) - Full from-scratch rebuild reference
 - [Changelog](CHANGELOG.md) - Release history
+
+## Validation
+
+This repository uses lint/build validation plus localization unit tests (`frontend/src/__tests__/localization.test.ts`) and manual workflow checks for localization changes.
 
 ## License
 

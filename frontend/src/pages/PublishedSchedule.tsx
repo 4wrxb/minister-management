@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { ArrowLeft, Calendar, AlertTriangle } from 'lucide-react';
 import axios from 'axios';
 import TimezoneSelector from '../components/TimezoneSelector';
-import { getSavedTimezone, getSlotDisplayTime, generateAssignmentSlots, DEFAULT_SLOT_OFFSET } from '../utils/timezone';
+import { getSavedTimezone, getSlotDisplayTime, generateAssignmentSlots, DEFAULT_SLOT_OFFSET } from '../lib/localization';
 
 interface PublishedPlayer {
   game_name: string;

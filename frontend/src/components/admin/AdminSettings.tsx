@@ -2,10 +2,14 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Save, X, Check, ToggleLeft, ToggleRight } from 'lucide-react';
 import axios from 'axios';
-import { VALID_SLOT_OFFSETS, DEFAULT_SLOT_OFFSET, type SlotOffset } from '../../utils/timezone';
+import { VALID_SLOT_OFFSETS, DEFAULT_SLOT_OFFSET, type SlotOffset, dateFormats, type SupportedLocale } from '../../lib/localization';
 
 export default function AdminSettings() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const normalizedLocale = (i18n.resolvedLanguage || i18n.language).toLowerCase().split('-')[0];
+  const locale = (normalizedLocale === 'en' || normalizedLocale === 'ko' || normalizedLocale === 'zh' || normalizedLocale === 'tr' || normalizedLocale === 'ar' || normalizedLocale === 'rr'
+    ? normalizedLocale
+    : 'en') as SupportedLocale;
   const [stateNumber, setStateNumber] = useState('');
   const [closingTimeLocal, setClosingTimeLocal] = useState('');
   const [currentClosingTime, setCurrentClosingTime] = useState('');
@@ -214,7 +218,7 @@ export default function AdminSettings() {
         <div className="mt-3 text-sm">
           {currentClosingTime ? (
             <p className={isClosed ? 'text-danger' : 'text-success'}>
-              {t('admin.currentClosingTime')}: {new Date(currentClosingTime).toLocaleString()}
+              {t('admin.currentClosingTime')}: {dateFormats.dateTimeShort(new Date(currentClosingTime), locale)}
               {isClosed && <span className="ml-2 font-medium">({t('home.applicationsClosed')})</span>}
             </p>
           ) : (

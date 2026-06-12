@@ -1,5 +1,5 @@
 import { Globe } from 'lucide-react';
-import { TIMEZONES, saveTimezone } from '../utils/timezone';
+import { TIMEZONES, saveTimezone } from '../lib/localization';
 
 interface TimezoneSelectorProps {
   value: string;
@@ -22,7 +22,7 @@ export default function TimezoneSelector({ value, onChange }: TimezoneSelectorPr
       >
         {TIMEZONES.map((tz) => (
           <option key={tz.id} value={tz.id}>
-            {tz.label} (UTC{tz.offset})
+            {tz.label}
           </option>
         ))}
       </select>

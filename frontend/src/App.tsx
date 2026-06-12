@@ -13,9 +13,10 @@ import { getAppBase } from './utils/appBase';
 
 function App() {
   const { i18n } = useTranslation();
+  const activeLanguage = (i18n.resolvedLanguage || i18n.language).toLowerCase().split('-')[0];
 
   // Set document direction for RTL languages
-  document.documentElement.dir = i18n.language === 'ar' ? 'rtl' : 'ltr';
+  document.documentElement.dir = activeLanguage === 'ar' ? 'rtl' : 'ltr';
 
   return (
     <Router basename={getAppBase()}>

@@ -39,6 +39,7 @@ This document contains everything needed to recreate the Ministry Management Sys
 - SQLite with `journal_mode=DELETE` (required for GCS FUSE compatibility)
 - Single gunicorn worker (required for SQLite on GCS FUSE)
 - 5 languages: English, Korean, Chinese, Turkish, Arabic (with RTL support for Arabic)
+- Frontend localization uses a shared `lib/localization/` layer for timezone display, date formatting, and locale-aware numbers
 - Settings stored as key-value pairs in SQLite `settings` table — configurable state number, application closing time, research day, fire crystal field visibility
 - Application closing time blocks new submissions after deadline but allows existing player updates
 - LootBar affiliate link integrated on home page, post-submission, and update page
@@ -67,8 +68,9 @@ minister_management/
 │       ├── App.tsx             # Router + layout
 │       ├── index.css           # Global styles, dark theme, scrollbar
 │       ├── i18n.ts             # All translations (EN/KO/ZH/TR/AR)
+│       ├── lib/
+│       │   └── localization/   # Timezone/date/number helpers
 │       ├── utils/
-│       │   ├── timezone.ts     # Timezone conversion utilities
 │       │   └── affiliate.ts    # LootBar affiliate link helper
 │       ├── components/
 │       │   ├── LanguageSelector.tsx

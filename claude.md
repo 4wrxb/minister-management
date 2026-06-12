@@ -19,6 +19,7 @@ A web application that automates State vs State (SVS) ministry-position scheduli
 - Tailwind CSS (custom dark navy + gold theme)
 - `react-router-dom` v6 for routing
 - `react-i18next` + `i18next` for i18n (5 languages)
+- Frontend timezone/date/number formatting is centralized in `frontend/src/lib/localization/` using `dayjs`; backend scheduling stays UTC-only
 - `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities` for drag-and-drop
 - `axios` for HTTP, `lucide-react` for icons, `clsx` for class merging
 - Location: `frontend/` — entry point `frontend/src/main.tsx`
@@ -56,8 +57,11 @@ minister_management/
 │   │   │       ├── PlayerManagement.tsx
 │   │   │       ├── AssignmentManagement.tsx
 │   │   │       └── AdminSettings.tsx
+│   │   ├── lib/
+│   │   │   └── localization/           # generateAssignmentSlots(), formatTimeInTimezone(), date/number formatting
+│   │   ├── __tests__/
+│   │   │   └── localization.test.ts    # Localization unit coverage
 │   │   ├── utils/
-│   │   │   ├── timezone.ts             # generateAssignmentSlots(), formatTimeInTimezone()
 │   │   │   └── affiliate.ts            # LootBar affiliate link helpers
 │   │   ├── i18n.ts                     # Translations: en, ko, zh, tr, ar
 │   │   ├── App.tsx                     # Router
@@ -311,8 +315,14 @@ npm run dev                   # http://localhost:5173
 
 ### Changing Time-Slot Granularity
 1. Backend: `generateTimeSlots`-style block at the top of `auto_assign()` in `backend/app.py` and the matching-window math beneath it.
-2. Frontend: `generateAssignmentSlots()` in `frontend/src/utils/timezone.ts`.
+2. Frontend: `generateAssignmentSlots()` in `frontend/src/lib/localization/timezones.ts`.
 3. Update USER_GUIDE.md "Time Slots" section and the slot-model section in `claude.md` / `PROJECT_SUMMARY.md` / `RECREATION_GUIDE.md`.
+
+### Updating Localization
+1. Keep timezone/date/number helpers in `frontend/src/lib/localization/`.
+2. Use `SupportedLocale` with `dateFormats` / `numberFormats` for locale-aware display.
+3. Update or add `frontend/src/__tests__/localization.test.ts` when the localization layer changes.
+4. Update the localization notes in `README.md`, `PROJECT_SUMMARY.md`, `RECREATION_GUIDE.md`, and `USER_GUIDE.md` if behavior changes.
 
 ## Testing Guidelines
 

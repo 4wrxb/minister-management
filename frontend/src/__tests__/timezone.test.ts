@@ -1,7 +1,7 @@
 /**
  * frontend/src/__tests__/timezone.test.ts
  *
- * Unit tests for the pure-function slot helpers in utils/timezone.ts —
+ * Unit tests for the pure-function slot helpers in lib/localization/timezones.ts —
  * specifically the offset-aware `generateAssignmentSlots` and the slot
  * display helper.
  */
@@ -12,7 +12,7 @@ import {
   displaySlotId,
   VALID_SLOT_OFFSETS,
   DEFAULT_SLOT_OFFSET,
-} from '@/utils/timezone'
+} from '@/lib/localization'
 
 describe('generateAssignmentSlots', () => {
   it('produces 48 aligned half-hour slots at offset 0', () => {

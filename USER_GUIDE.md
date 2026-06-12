@@ -181,6 +181,7 @@ A comprehensive in-app **Admin Guide** is available at `/admin/guide`, accessibl
 - **Assignment slots:** the auto-assigner uses a fixed list of **49 thirty-minute slots anchored at end-of-day (23:50)** rather than midnight. The sequence is `23:50, 00:20, 00:50, 01:20, ..., 23:20, 23:50+`, where `23:50` is the pre-midnight slot and `23:50+` is the end-of-day slot (shown as `23:50 (+1d)` in exports).
 - **±20 minute tolerance:** each hour you select maps to three candidate 30-min slots within ±20 minutes — e.g. selecting `14:00` makes you eligible for `13:50`, `14:20`, or `14:50`. You get the first one that's empty (highest-points players first).
 - Time slots display a **heat map** during selection, showing how many other players have chosen each slot
+- Your selected timezone only affects how times are displayed in the frontend; all saved scheduling data remains UTC
 
 ## Tips
 
@@ -236,6 +237,8 @@ The application supports:
 - 🇸🇦 Arabic (العربية)
 
 Use the language selector in the top-right corner to change languages.
+
+The frontend localization layer also formats dates and numbers per language, so point totals and closing times follow the selected locale.
 
 ## Support
 

@@ -15,7 +15,7 @@ import {
 import { Sparkles, Download, AlertCircle, Globe, EyeOff, Lock, Unlock } from 'lucide-react';
 import axios from 'axios';
 import TimezoneSelector from '../TimezoneSelector';
-import { generateAssignmentSlots, getSlotDisplayTime, getSavedTimezone, DEFAULT_SLOT_OFFSET } from '../../utils/timezone';
+import { generateAssignmentSlots, getSlotDisplayTime, getSavedTimezone, DEFAULT_SLOT_OFFSET, numberFormats, type SupportedLocale } from '../../lib/localization';
 
 interface AssignedPlayer {
   id: number;
@@ -46,7 +46,12 @@ interface UnassignedPlayer extends AssignedPlayer {
 const PLAYER_CARD_CLASS = 'bg-accent/15 border-accent/40 text-accent';
 
 // Draggable player card
-function DraggablePlayer({ player, sourceSlot, onToggleLock }: { player: AssignedPlayer; sourceSlot: string; onToggleLock?: (player: AssignedPlayer, slot: string) => void }) {
+function DraggablePlayer({ player, sourceSlot, locale, onToggleLock }: {
+  player: AssignedPlayer;
+  sourceSlot: string;
+  locale: SupportedLocale;
+  onToggleLock?: (player: AssignedPlayer, slot: string) => void;
+}) {
   const dragId = `player-${player.player_id}-${sourceSlot}`;
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: dragId,
@@ -94,7 +99,7 @@ function DraggablePlayer({ player, sourceSlot, onToggleLock }: { player: Assigne
         <div className="min-w-0 flex-1">
           <div className="font-medium truncate">{player.alliance && <span className="text-accent">[{player.alliance}]</span>} {player.game_name}</div>
           <div className="text-xs opacity-75">
-            {player.fid} • {(player.points ?? 0).toLocaleString()} pts
+            {player.fid} • {numberFormats.integer(player.points ?? 0, locale)} pts
           </div>
         </div>
         {sourceSlot !== 'unassigned' && onToggleLock && (
@@ -117,7 +122,7 @@ function DraggablePlayer({ player, sourceSlot, onToggleLock }: { player: Assigne
 }
 
 // Static player card (for overlay while dragging)
-function PlayerCard({ player }: { player: AssignedPlayer }) {
+function PlayerCard({ player, locale }: { player: AssignedPlayer; locale: SupportedLocale }) {
   return (
     <div
       className={`p-3 border-2 rounded-lg shadow-lg ${PLAYER_CARD_CLASS}`}
@@ -146,7 +151,7 @@ function PlayerCard({ player }: { player: AssignedPlayer }) {
         <div className="min-w-0">
           <div className="font-medium truncate">{player.alliance && <span className="text-accent">[{player.alliance}]</span>} {player.game_name}</div>
           <div className="text-xs opacity-75">
-            {player.fid} • {(player.points ?? 0).toLocaleString()} pts
+            {player.fid} • {numberFormats.integer(player.points ?? 0, locale)} pts
           </div>
         </div>
       </div>
@@ -203,7 +208,8 @@ function DroppableUnassigned({ children, isOver }: { children: React.ReactNode; 
 }
 
 export default function AssignmentManagement() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language as SupportedLocale;
   const [selectedDay, setSelectedDay] = useState('monday');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -601,8 +607,9 @@ export default function AssignmentManagement() {
                             key={`player-${player.player_id}-${slot}`}
                             player={player}
                             sourceSlot={slot}
-                            onToggleLock={handleToggleLock}
-                          />
+                                        locale={locale}
+                                        onToggleLock={handleToggleLock}
+                                      />
                         ))}
                       </div>
                     </DroppableSlot>
@@ -623,6 +630,7 @@ export default function AssignmentManagement() {
                       <DraggablePlayer
                         player={player}
                         sourceSlot="unassigned"
+                        locale={locale}
                       />
                       {player.preferred_times && player.preferred_times.length > 0 && (
                         <div className="text-xs text-theme-dim mt-1 pl-2">
@@ -644,7 +652,7 @@ export default function AssignmentManagement() {
           {/* Drag overlay - shows a floating copy of the card while dragging */}
           <DragOverlay>
             {activePlayer ? (
-              <PlayerCard player={activePlayer} />
+              <PlayerCard player={activePlayer} locale={locale} />
             ) : null}
           </DragOverlay>
         </DndContext>
