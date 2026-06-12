@@ -8,9 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+### Changed
+
+### Fixed
+
+## [1.5.0] — 2026-06-12
+
+### Added
 - **Comprehensive maintenance and security workflows**:
   - **Dependabot auto-updates** (`.github/dependabot.yml`): Weekly automated PRs for npm, pip, and GitHub Actions dependencies. Semver-major updates for React, TypeScript, and Flask are ignored by Dependabot and require manual review to upgrade.
-  - **Nightly security scanning** (`.github/workflows/security-scan.yml`): CodeQL static analysis, Safety vulnerability checks, and npm audit. Runs nightly at 02:00 UTC; the workflow run fails when vulnerabilities are detected (does not block merges because it’s scheduled).
+  - **Nightly security scanning** (`.github/workflows/security-scan.yml`): CodeQL static analysis, Safety vulnerability checks, and npm audit. Runs nightly at 02:00 UTC; the workflow run fails when vulnerabilities are detected (does not block merges because it's scheduled).
   - **Daily maintenance checks** were evaluated and intentionally removed because they overlapped with Dependabot coverage or lacked a low-noise path to become a useful gating signal.
   - **Documentation guide** (`.github/MAINTENANCE.md`): Complete reference for workflow strategy, configuration, and troubleshooting.
 - `time_slot_offset` admin-configurable setting (allowed values: `-20`, `-15`, `-10`, `0`; default `-10`). Drives the 30-minute assignment slot layout: non-zero offsets produce 49 end-of-day-anchored slots, offset `0` produces 48 aligned half-hour slots.
@@ -193,7 +201,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Frontend:** React 18 + TypeScript + Vite + Tailwind, react-i18next, @dnd-kit drag-and-drop.
 - **Deployment:** multi-stage Dockerfile, `docker-compose.yml`, Google Cloud Run reference deployment with GCS FUSE.
 
-[Unreleased]: https://github.com/4wrxb/minister-management/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/4wrxb/minister-management/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/4wrxb/minister-management/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/4wrxb/minister-management/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/4wrxb/minister-management/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/4wrxb/minister-management/compare/v1.1.5...v1.2.0
