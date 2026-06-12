@@ -283,7 +283,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Azure login
-        uses: azure/login@v1
+        uses: azure/login@v3
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
@@ -327,7 +327,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Azure login
-        uses: azure/login@v1
+        uses: azure/login@v3
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
@@ -503,7 +503,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Azure login
-        uses: azure/login@v1
+        uses: azure/login@v3
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
@@ -646,7 +646,7 @@ jobs:
       name: production
     steps:
       - name: Azure login
-        uses: azure/login@v1
+        uses: azure/login@v3
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
@@ -707,7 +707,7 @@ jobs:
       deployments: write
     steps:
       - name: Azure login
-        uses: azure/login@v1
+        uses: azure/login@v3
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
@@ -754,7 +754,7 @@ jobs:
       name: production
     steps:
       - name: Azure login
-        uses: azure/login@v1
+        uses: azure/login@v3
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
