@@ -23,7 +23,8 @@
     "@dnd-kit/utilities": "^3.2.2",
     "axios": "^1.6.2",
     "lucide-react": "^0.303.0",
-    "clsx": "^2.1.0"
+    "clsx": "^2.1.0",
+    "dayjs": "^1.11.10"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",
