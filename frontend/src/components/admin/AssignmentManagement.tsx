@@ -15,7 +15,7 @@ import {
 import { Sparkles, Download, AlertCircle, Globe, EyeOff, Lock, Unlock } from 'lucide-react';
 import axios from 'axios';
 import TimezoneSelector from '../TimezoneSelector';
-import { generateAssignmentSlots, getSlotDisplayTime, getSavedTimezone } from '../../utils/timezone';
+import { generateAssignmentSlots, getSlotDisplayTime, getSavedTimezone, DEFAULT_SLOT_OFFSET } from '../../utils/timezone';
 
 interface AssignedPlayer {
   id: number;
@@ -39,8 +39,9 @@ interface UnassignedPlayer extends AssignedPlayer {
   preferred_times: string[];
 }
 
-// Use the shared slot generator (23:50 through 23:50+)
-const generateTimeSlots = generateAssignmentSlots;
+// Use the shared slot generator; the offset is loaded from the backend so
+// admin-changed offsets immediately propagate to every consumer of this
+// component without a page reload.
 
 const PLAYER_CARD_CLASS = 'bg-accent/15 border-accent/40 text-accent';
 
@@ -176,7 +177,7 @@ function DroppableSlot({ slotId, displayTime, children, isOver, hasPlayer }: {
     >
       <div className="font-semibold text-theme-dim mb-2">
         {displayTime}
-        {slotId === '23:50+' && <span className="text-xs opacity-60 ml-1">(+1d)</span>}
+        {slotId.endsWith('+') && <span className="text-xs opacity-60 ml-1">(+1d)</span>}
       </div>
       {children}
     </div>
@@ -213,6 +214,7 @@ export default function AssignmentManagement() {
   const [researchDay, setResearchDay] = useState<'tuesday' | 'friday'>('tuesday');
   const [timezone, setTimezone] = useState(getSavedTimezone);
   const [publishedDays, setPublishedDays] = useState<string[]>([]);
+  const [slotOffset, setSlotOffset] = useState<number>(DEFAULT_SLOT_OFFSET);
 
   const DAY_TABS = [
     { key: 'monday', label: 'Monday - Construction' },
@@ -224,11 +226,12 @@ export default function AssignmentManagement() {
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
 
-  const timeSlots = generateTimeSlots();
+  const timeSlots = generateAssignmentSlots(slotOffset);
 
   useEffect(() => {
     fetchResearchDay();
     fetchPublishedDays();
+    fetchSlotOffset();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Mount-only initialization; both fetch helpers are recreated each render and intentionally not memoized to avoid re-fire loops.
   }, []);
 
@@ -257,6 +260,18 @@ export default function AssignmentManagement() {
       setPublishedDays(response.data.published_days || []);
     } catch {
       // ignore
+    }
+  };
+
+  const fetchSlotOffset = async () => {
+    try {
+      const response = await axios.get('/api/settings/time-slot-offset');
+      const value = response.data?.time_slot_offset;
+      if (typeof value === 'number') {
+        setSlotOffset(value);
+      }
+    } catch {
+      // ignore — keep default
     }
   };
 

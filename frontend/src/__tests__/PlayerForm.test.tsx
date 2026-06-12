@@ -2,7 +2,7 @@
  * frontend/src/__tests__/PlayerForm.test.tsx
  *
  * Unit tests for PlayerForm step-1 validation and initial render.
- * Mocks: axios (all API calls), react-i18next, react-router-dom, timezone/affiliate utils.
+ * Mocks: axios (all API calls), react-i18next, react-router-dom, timezone utils.
  */
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -38,8 +38,6 @@ vi.mock('@/utils/timezone', () => ({
   TIMEZONES: [],
 }))
 
-vi.mock('@/utils/affiliate', () => ({ LOOTBAR_URL: 'https://example.com' }))
-
 // ── Startup API mock ───────────────────────────────────────────────────────────
 
 function setupStartupMocks() {
@@ -49,6 +47,7 @@ function setupStartupMocks() {
       '/api/settings/research-day': { research_day: 'tuesday' },
       '/api/time-preferences/heatmap': {},
       '/api/settings/application-closing-time': { is_closed: false },
+      '/api/settings/time-slot-offset': { time_slot_offset: -10 },
     }
     const data = responses[url as string]
     if (data !== undefined) return Promise.resolve({ data })

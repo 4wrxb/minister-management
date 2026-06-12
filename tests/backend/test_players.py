@@ -28,6 +28,24 @@ def test_submit_duplicate_fid_updates_player(client):
         .assert_json_contains(game_name="Updated"))
 
 
+def test_player_round_trip_preserves_hourly_preferences(client):
+    """Hourly preferences round-trip through hour_index storage regardless of offset.
+
+    The DB stores integer hour indices, but the API contract is hour strings
+    like "00:00", "13:00", "23:00" — submit, retrieve, and assert the exact
+    set comes back."""
+    payload = player_payload(
+        "fid007",
+        "RoundTrip",
+        time_slots=["00:00", "13:00", "23:00"],
+    )
+    resp = client.post("/api/player/submit", json=payload)
+    assert resp.status_code == 200
+
+    fetched = client.get("/api/player/fid007").get_json()
+    assert set(fetched["time_slots"]) == {"00:00", "13:00", "23:00"}
+
+
 # ── Validation ────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("missing_field", ["fid", "game_name", "alliance"])

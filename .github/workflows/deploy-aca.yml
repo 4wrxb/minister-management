@@ -20,21 +20,22 @@ on:
           - deploy
           - rollback
           - destroy
-      force_bootstrap:
-        description: 'Force bootstrap (create resources if missing)'
+          - cleanup
+      teardown_staging_on_production:
+        description: 'Tear down staging after production deploy'
         required: false
         type: boolean
-        default: false
-      skip_staging:
-        description: 'Skip staging deploy, go directly to production (requires approval)'
-        required: false
-        type: boolean
-        default: false
-      image_tag:
-        description: 'Container image tag (latest or commit SHA)'
+        default: true
+      backup_blob_name:
+        description: 'Rollback source backup blob name'
         required: false
         type: string
-        default: latest
+        default: ''
+      backup_retention_days:
+        description: 'Cleanup backup retention days'
+        required: false
+        type: string
+        default: '7'
 
 concurrency:
   group: deploy-${{ github.event.inputs.environment }}
@@ -52,28 +53,51 @@ jobs:
     name: Validate configuration
     runs-on: ubuntu-latest
     outputs:
-      image-uri: ${{ steps.image-uri.outputs.uri }}
       resource-group: ${{ steps.rg-name.outputs.name }}
     steps:
       - name: Validate inputs
         run: |
           echo "Environment: ${{ github.event.inputs.environment }}"
           echo "Action: ${{ github.event.inputs.action }}"
-          echo "Skip staging: ${{ github.event.inputs.skip_staging }}"
+          echo "Tear down staging on production flow: ${{ github.event.inputs.teardown_staging_on_production }}"
 
           if [[ "${{ github.event.inputs.environment }}" != "staging" && "${{ github.event.inputs.environment }}" != "production" ]]; then
             echo "ERROR: Invalid environment"
             exit 1
           fi
 
-      - name: Compute image URI
-        id: image-uri
-        run: |
-          TAG="${{ github.event.inputs.image_tag }}"
-          TAG="${TAG:-latest}"
-          URI="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}"
-          echo "uri=${URI}" >> "$GITHUB_OUTPUT"
-          echo "Image URI: ${URI}"
+          if [[ "${{ github.event.inputs.action }}" != "deploy" && "${{ github.event.inputs.action }}" != "rollback" && "${{ github.event.inputs.action }}" != "destroy" && "${{ github.event.inputs.action }}" != "cleanup" ]]; then
+            echo "ERROR: Invalid action"
+            exit 1
+          fi
+
+          if [[ "${{ github.event.inputs.action }}" == "rollback" && "${{ github.event.inputs.environment }}" != "production" ]]; then
+            echo "ERROR: rollback is only supported for environment=production"
+            exit 1
+          fi
+
+          if [[ "${{ github.event.inputs.action }}" == "destroy" && "${{ github.event.inputs.environment }}" != "staging" ]]; then
+            echo "ERROR: destroy is only supported for environment=staging"
+            exit 1
+          fi
+
+          if [[ "${{ github.event.inputs.action }}" == "cleanup" && "${{ github.event.inputs.environment }}" != "production" ]]; then
+            echo "ERROR: cleanup is only supported for environment=production"
+            exit 1
+          fi
+
+          if [[ "${{ github.event.inputs.action }}" == "cleanup" ]]; then
+            DAYS="${{ github.event.inputs.backup_retention_days }}"
+            if ! [[ "$DAYS" =~ ^[0-9]+$ ]] || [[ "$DAYS" -lt 1 ]]; then
+              echo "ERROR: backup_retention_days must be a positive integer when action=cleanup"
+              exit 1
+            fi
+          fi
+
+          if [[ "${{ github.event.inputs.action }}" == "rollback" && -z "${{ github.event.inputs.backup_blob_name }}" ]]; then
+            echo "ERROR: backup_blob_name is required when action=rollback"
+            exit 1
+          fi
 
       - name: Compute resource group name
         id: rg-name
@@ -129,8 +153,8 @@ jobs:
   build-image:
     name: Build and push image
     runs-on: ubuntu-latest
-    # validate-config must be in needs so we can read its image-uri output
-    # below. validate-bicep is the gating quality check.
+    if: ${{ github.event.inputs.action == 'deploy' }}
+    # validate-bicep is the gating quality check.
     needs: [validate-config, validate-bicep]
     # GITHUB_TOKEN needs packages:write to push to ghcr.io. On many repos
     # the org/user default for default_workflow_permissions is "read", so
@@ -163,7 +187,6 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ needs.validate-config.outputs.image-uri }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           cache-from: type=gha,scope=minister-management-build
           cache-to: type=gha,mode=max,scope=minister-management-build
@@ -175,7 +198,7 @@ jobs:
         run: |
           echo "Image pushed successfully"
           echo "Digest: ${{ steps.push.outputs.digest }}"
-          echo "Tags: ${{ needs.validate-config.outputs.image-uri }}"
+          echo "Tag: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
 
   # ─── Verify GHCR Package Is Pullable ─────────────────────────────
   # ACA pulls images anonymously (no registry credentials configured),
@@ -193,6 +216,7 @@ jobs:
   verify-package-visibility:
     name: Verify GHCR package is public
     runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.action == 'deploy' }}
     needs: build-image
     permissions:
       packages: read
@@ -251,8 +275,7 @@ jobs:
     name: Bootstrap resources if needed
     runs-on: ubuntu-latest
     needs: [validate-config, validate-bicep]
-    if: ${{ github.event.inputs.action == 'deploy' || github.event.inputs.force_bootstrap == 'true' }}
-    environment: azure
+    if: ${{ github.event.inputs.action == 'deploy' }}
     outputs:
       rg-created: ${{ steps.check-rg.outputs.created }}
     steps:
@@ -295,8 +318,7 @@ jobs:
     needs: [validate-config, build-image, verify-package-visibility, bootstrap]
     if: |
       github.event.inputs.action == 'deploy' && 
-      github.event.inputs.environment == 'staging' &&
-      github.event.inputs.skip_staging != 'true'
+      github.event.inputs.environment == 'staging'
     environment:
       name: staging
       url: ${{ steps.deploy.outputs.app-url }}
@@ -309,25 +331,90 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Backup current database
-        id: backup
+      - name: Ensure staging DB seeded from production snapshot
         run: |
+          set -euo pipefail
+          PROD_RG="minister-rg-production"
           RG="${{ needs.validate-config.outputs.resource-group }}"
-          TIMESTAMP=$(date -u +'%Y%m%d-%H%M%S')
-          BACKUP_NAME="minister-backup-${TIMESTAMP}.db"
-          
-          # Get storage account name from recent deployment
-          STORAGE_ACCOUNT=$(az storage account list --resource-group "$RG" --query "[0].name" -o tsv 2>/dev/null || echo "")
-          
-          if [ -n "$STORAGE_ACCOUNT" ]; then
-            echo "Backing up to $BACKUP_NAME..."
-            # Backup logic here (requires connectivity to file share)
-            echo "backup-name=${BACKUP_NAME}" >> "$GITHUB_OUTPUT"
-            echo "✓ Backup created: $BACKUP_NAME"
-          else
-            echo "No existing storage account — skipping backup"
-            echo "backup-name=" >> "$GITHUB_OUTPUT"
+          LOCATION="eastus"
+          SHARE_NAME="minister-data"
+          DB_PATH="minister.db"
+          TMP_DB="/tmp/minister-production.db"
+          SKIP_SEED="false"
+
+          az deployment group create \
+            --resource-group "$RG" \
+            --name staging-storage-bootstrap \
+            --template-file ${{ env.BICEP_DIR }}/storage.bicep \
+            --parameters environmentName=staging location=$LOCATION > /dev/null
+
+          if ! az group exists --name "$PROD_RG" | grep -q true; then
+            echo "::warning::Skipping staging DB seed: production resource group '$PROD_RG' does not exist."
+            SKIP_SEED="true"
           fi
+
+          if [ "$SKIP_SEED" != "true" ] && ! az deployment group show --resource-group "$PROD_RG" --name main-deployment > /dev/null 2>&1; then
+            echo "::warning::Skipping staging DB seed: production main-deployment is missing."
+            SKIP_SEED="true"
+          fi
+
+          if [ "$SKIP_SEED" == "true" ]; then
+            exit 0
+          fi
+
+          PROD_OUTPUTS=$(az deployment group show \
+            --resource-group "$PROD_RG" \
+            --name main-deployment \
+            --query properties.outputs -o json 2>/dev/null || echo '{}')
+
+          PROD_STORAGE=$(echo "$PROD_OUTPUTS" | jq -r '.storageAccountName.value // empty')
+          if [ -z "$PROD_STORAGE" ]; then
+            echo "ERROR: Could not resolve production storage account from main-deployment outputs."
+            exit 1
+          fi
+
+          STAGING_OUTPUTS=$(az deployment group show \
+            --resource-group "$RG" \
+            --name staging-storage-bootstrap \
+            --query properties.outputs -o json 2>/dev/null || echo '{}')
+
+          STAGING_STORAGE=$(echo "$STAGING_OUTPUTS" | jq -r '.storageAccountName.value // empty')
+          if [ -z "$STAGING_STORAGE" ]; then
+            echo "ERROR: Could not resolve staging storage account from staging-storage-bootstrap outputs."
+            exit 1
+          fi
+
+          PROD_KEY=$(az storage account keys list --resource-group "$PROD_RG" --account-name "$PROD_STORAGE" --query "[0].value" -o tsv)
+          STAGING_KEY=$(az storage account keys list --resource-group "$RG" --account-name "$STAGING_STORAGE" --query "[0].value" -o tsv)
+
+          DB_EXISTS=$(az storage file exists \
+            --account-name "$PROD_STORAGE" \
+            --account-key "$PROD_KEY" \
+            --share-name "$SHARE_NAME" \
+            --path "$DB_PATH" \
+            --query exists -o tsv)
+
+          if [ "$DB_EXISTS" != "true" ]; then
+            echo "::warning::Skipping staging DB seed: production DB file '$DB_PATH' not found in '$PROD_STORAGE/$SHARE_NAME'."
+            exit 0
+          fi
+
+          az storage file download \
+            --account-name "$PROD_STORAGE" \
+            --account-key "$PROD_KEY" \
+            --share-name "$SHARE_NAME" \
+            --path "$DB_PATH" \
+            --dest "$TMP_DB" > /dev/null
+
+          az storage file upload \
+            --account-name "$STAGING_STORAGE" \
+            --account-key "$STAGING_KEY" \
+            --share-name "$SHARE_NAME" \
+            --path "$DB_PATH" \
+            --source "$TMP_DB" > /dev/null
+
+          rm -f "$TMP_DB"
+          echo "✓ Staging DB seeded from current production snapshot"
 
       - name: Deploy via Bicep
         id: deploy
@@ -335,9 +422,9 @@ jobs:
           RG="${{ needs.validate-config.outputs.resource-group }}"
           LOCATION="eastus"
           
-          # Deploy by commit SHA, not the operator-supplied image_tag
-          # (which is typically ':latest'). If we deployed by ':latest',
-          # Bicep would see the same containerImage value as last run and
+          # Deploy by commit SHA so each deploy has a unique image reference.
+          # If we deployed with a stable tag, Bicep would see the same
+          # containerImage value as last run and
           # do nothing - ACA only creates a new revision when the image
           # reference string actually changes. The ':<sha>' tag is also
           # pushed by build-image and is what verify-package-visibility
@@ -400,37 +487,11 @@ jobs:
           
           echo "✓ All smoke tests passed"
 
-      - name: Rollback on failure
-        if: failure() && steps.backup.outputs.backup-name != ''
-        run: |
-          echo "Deployment failed — rolling back..."
-          # Restore logic here
-          echo "✓ Rollback completed"
-
-  # ─── Approval Gate (for Production) ──────────────────────────────
-  approval-gate:
-    name: Production approval gate
-    runs-on: ubuntu-latest
-    needs: [validate-config, deploy-staging]
-    if: |
-      github.event.inputs.environment == 'production' && 
-      github.event.inputs.action == 'deploy'
-    environment:
-      name: production
-      # This will pause the workflow for manual approval
-    steps:
-      - name: Check approval requirements
-        run: |
-          echo "Production deployment requires approval."
-          echo "Environment: production"
-          echo "Action: deploy"
-          echo "This workflow will pause here until approved by a team member."
-
   # ─── Deploy to Production ────────────────────────────────────────
   deploy-production:
     name: Deploy to production
     runs-on: ubuntu-latest
-    needs: [validate-config, build-image, verify-package-visibility, approval-gate]
+    needs: [validate-config, build-image, verify-package-visibility, bootstrap]
     if: |
       github.event.inputs.environment == 'production' && 
       github.event.inputs.action == 'deploy'
@@ -449,11 +510,71 @@ jobs:
       - name: Backup current database
         id: backup
         run: |
+          set -euo pipefail
           RG="${{ needs.validate-config.outputs.resource-group }}"
+          
+          # Skip backup if this is the first deployment (no main-deployment exists yet).
+          if ! az deployment group show --resource-group "$RG" --name main-deployment > /dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "⊘ Skipping backup (first deploy — no existing database)"
+            exit 0
+          fi
+          
+          echo "skip=false" >> "$GITHUB_OUTPUT"
           TIMESTAMP=$(date -u +'%Y%m%d-%H%M%S')
-          BACKUP_NAME="minister-backup-prod-${TIMESTAMP}.db"
-          echo "backup-name=${BACKUP_NAME}" >> "$GITHUB_OUTPUT"
-          echo "Backup name: $BACKUP_NAME"
+          SHARE_NAME="minister-data"
+          DB_PATH="minister.db"
+          TMP_DB="/tmp/minister-production-backup.db"
+          BACKUP_BLOB="prod-manual-backup-${TIMESTAMP}.db"
+
+          OUTPUTS=$(az deployment group show \
+            --resource-group "$RG" \
+            --name main-deployment \
+            --query properties.outputs -o json 2>/dev/null || echo '{}')
+
+          STORAGE_ACCOUNT=$(echo "$OUTPUTS" | jq -r '.storageAccountName.value // empty')
+          BACKUP_CONTAINER=$(echo "$OUTPUTS" | jq -r '.backupContainerName.value // "backups"')
+          if [ -z "$STORAGE_ACCOUNT" ]; then
+            echo "ERROR: Could not resolve production storage account from main-deployment outputs for backup."
+            exit 1
+          fi
+
+          ACCOUNT_KEY=$(az storage account keys list --resource-group "$RG" --account-name "$STORAGE_ACCOUNT" --query "[0].value" -o tsv)
+          DB_EXISTS=$(az storage file exists \
+            --account-name "$STORAGE_ACCOUNT" \
+            --account-key "$ACCOUNT_KEY" \
+            --share-name "$SHARE_NAME" \
+            --path "$DB_PATH" \
+            --query exists -o tsv)
+          if [ "$DB_EXISTS" != "true" ]; then
+            echo "ERROR: Production DB file '$DB_PATH' not found; aborting deploy."
+            exit 1
+          fi
+
+          az storage file download \
+            --account-name "$STORAGE_ACCOUNT" \
+            --account-key "$ACCOUNT_KEY" \
+            --share-name "$SHARE_NAME" \
+            --path "$DB_PATH" \
+            --dest "$TMP_DB" > /dev/null
+
+          az storage container create \
+            --name "$BACKUP_CONTAINER" \
+            --account-name "$STORAGE_ACCOUNT" \
+            --account-key "$ACCOUNT_KEY" > /dev/null
+
+          az storage blob upload \
+            --account-name "$STORAGE_ACCOUNT" \
+            --account-key "$ACCOUNT_KEY" \
+            --container-name "$BACKUP_CONTAINER" \
+            --name "$BACKUP_BLOB" \
+            --file "$TMP_DB" \
+            --overwrite > /dev/null
+
+          rm -f "$TMP_DB"
+          echo "backup-blob=${BACKUP_BLOB}" >> "$GITHUB_OUTPUT"
+          echo "backup-container=${BACKUP_CONTAINER}" >> "$GITHUB_OUTPUT"
+          echo "✓ Production DB backup created: ${BACKUP_CONTAINER}/${BACKUP_BLOB}"
 
       - name: Deploy via Bicep to production
         id: deploy
@@ -476,8 +597,8 @@ jobs:
               secretKey="${{ secrets.SECRET_KEY }}" \
               adminPassword="${{ secrets.ADMIN_PASSWORD }}" \
               ministerPassword="${{ secrets.MINISTER_PASSWORD }}" \
-              minInstances=2 \
-              maxInstances=5 \
+              minReplicas=1 \
+              maxReplicas=1 \
               urlPrefix="${{ secrets.URL_PREFIX || '' }}"
           
           OUTPUTS=$(az deployment group show \
@@ -508,25 +629,193 @@ jobs:
           
           echo "✓ Production app is healthy"
 
-      - name: Auto-rollback on failure
-        if: failure() && steps.health-check.outcome == 'failure'
+      - name: Log rollback pointer
+        if: success() && steps.backup.outputs.backup-container != '' && steps.backup.outputs.backup-blob != ''
         run: |
-          echo "ERROR: Production deployment failed health check — initiating rollback..."
-          # Rollback to previous revision
+          echo "Rollback backup blob: ${{ steps.backup.outputs.backup-container }}/${{ steps.backup.outputs.backup-blob }}"
+
+  # ─── Manual Rollback (Production DB Restore) ─────────────────────
+  rollback-production:
+    name: Roll back production DB from backup
+    runs-on: ubuntu-latest
+    needs: [validate-config]
+    if: |
+      github.event.inputs.environment == 'production' &&
+      github.event.inputs.action == 'rollback'
+    environment:
+      name: production
+    steps:
+      - name: Azure login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Restore backup blob into production database file
+        run: |
+          set -euo pipefail
           RG="${{ needs.validate-config.outputs.resource-group }}"
-          az containerapp update \
+          SHARE_NAME="minister-data"
+          DB_PATH="minister.db"
+          TMP_DB="/tmp/minister-rollback.db"
+          BACKUP_BLOB="${{ github.event.inputs.backup_blob_name }}"
+
+          OUTPUTS=$(az deployment group show \
             --resource-group "$RG" \
-            --name minister-app-production \
-            --set-env-vars FLASK_ENV=production \
-            || true
-          echo "⚠️  Rollback initiated. Manual verification required."
+            --name main-deployment \
+            --query properties.outputs -o json 2>/dev/null || echo '{}')
+
+          STORAGE_ACCOUNT=$(echo "$OUTPUTS" | jq -r '.storageAccountName.value // empty')
+          BACKUP_CONTAINER=$(echo "$OUTPUTS" | jq -r '.backupContainerName.value // "backups"')
+          if [ -z "$STORAGE_ACCOUNT" ]; then
+            echo "ERROR: Could not resolve production storage account from main-deployment outputs for rollback."
+            exit 1
+          fi
+
+          ACCOUNT_KEY=$(az storage account keys list --resource-group "$RG" --account-name "$STORAGE_ACCOUNT" --query "[0].value" -o tsv)
+
+          az storage blob download \
+            --account-name "$STORAGE_ACCOUNT" \
+            --account-key "$ACCOUNT_KEY" \
+            --container-name "$BACKUP_CONTAINER" \
+            --name "$BACKUP_BLOB" \
+            --file "$TMP_DB" > /dev/null
+
+          az storage file upload \
+            --account-name "$STORAGE_ACCOUNT" \
+            --account-key "$ACCOUNT_KEY" \
+            --share-name "$SHARE_NAME" \
+            --path "$DB_PATH" \
+            --source "$TMP_DB" > /dev/null
+
+          rm -f "$TMP_DB"
+          echo "✓ Restored production DB from ${BACKUP_CONTAINER}/${BACKUP_BLOB}"
+
+  # ─── Shared Staging Teardown ─────────────────────────────────────
+  teardown-staging:
+    name: Tear down staging resource group
+    runs-on: ubuntu-latest
+    needs: [validate-config, deploy-production]
+    if: |
+      always() && (
+        (github.event.inputs.environment == 'staging' && github.event.inputs.action == 'destroy') ||
+        (github.event.inputs.environment == 'production' &&
+         github.event.inputs.action == 'deploy' &&
+         github.event.inputs.teardown_staging_on_production == 'true' &&
+         needs.deploy-production.result == 'success')
+      )
+    permissions:
+      deployments: write
+    steps:
+      - name: Azure login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Delete staging resource group
+        run: |
+          set -euo pipefail
+          STAGING_RG="minister-rg-staging"
+          if az group exists --name "$STAGING_RG" | grep -q true; then
+            az group delete --name "$STAGING_RG" --yes
+            echo "✓ Deleted staging resource group: $STAGING_RG"
+          else
+            echo "Staging RG not found; nothing to delete."
+          fi
+
+      - name: Mark staging GitHub environment as inactive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          DEPLOYMENTS=$(gh api --paginate "repos/${{ github.repository }}/deployments?environment=staging" \
+            | jq -s '[.[].[] | .id]')
+          COUNT=$(echo "$DEPLOYMENTS" | jq 'length')
+          if [ "$COUNT" -eq 0 ]; then
+            echo "No staging deployments found in GitHub — nothing to deactivate."
+            exit 0
+          fi
+          echo "$DEPLOYMENTS" | jq -r '.[]' | while read -r DEPLOY_ID; do
+            gh api "repos/${{ github.repository }}/deployments/${DEPLOY_ID}/statuses" \
+              --method POST \
+              --field state=inactive \
+              --silent
+            echo "✓ Marked GitHub deployment $DEPLOY_ID (staging) as inactive"
+          done
+
+  # ─── Cleanup Production Cost Drivers ─────────────────────────────
+  cleanup-production:
+    name: Cleanup production cost drivers
+    runs-on: ubuntu-latest
+    needs: [validate-config]
+    if: |
+      github.event.inputs.environment == 'production' &&
+      github.event.inputs.action == 'cleanup'
+    environment:
+      name: production
+    steps:
+      - name: Azure login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Prune old production DB backup blobs
+        run: |
+          set -euo pipefail
+          RG="${{ needs.validate-config.outputs.resource-group }}"
+          RETENTION_DAYS="${{ github.event.inputs.backup_retention_days }}"
+          CUTOFF_EPOCH=$(date -u -d "-${RETENTION_DAYS} days" +%s)
+
+          OUTPUTS=$(az deployment group show \
+            --resource-group "$RG" \
+            --name main-deployment \
+            --query properties.outputs -o json 2>/dev/null || echo '{}')
+
+          STORAGE_ACCOUNT=$(echo "$OUTPUTS" | jq -r '.storageAccountName.value // empty')
+          BACKUP_CONTAINER=$(echo "$OUTPUTS" | jq -r '.backupContainerName.value // "backups"')
+          if [ -z "$STORAGE_ACCOUNT" ]; then
+            echo "ERROR: Could not resolve production storage account from main-deployment outputs for cleanup."
+            exit 1
+          fi
+
+          ACCOUNT_KEY=$(az storage account keys list --resource-group "$RG" --account-name "$STORAGE_ACCOUNT" --query "[0].value" -o tsv)
+          CONTAINER_EXISTS=$(az storage container exists \
+            --account-name "$STORAGE_ACCOUNT" \
+            --account-key "$ACCOUNT_KEY" \
+            --name "$BACKUP_CONTAINER" \
+            --query exists -o tsv 2>/dev/null || echo false)
+          if [ "$CONTAINER_EXISTS" != "true" ]; then
+            echo "No backup container named '$BACKUP_CONTAINER' found. Nothing to prune."
+            exit 0
+          fi
+
+          BLOBS=$(az storage blob list \
+            --account-name "$STORAGE_ACCOUNT" \
+            --account-key "$ACCOUNT_KEY" \
+            --container-name "$BACKUP_CONTAINER" -o json)
+
+          DELETED=0
+          while IFS= read -r row; do
+            NAME=$(echo "$row" | jq -r '.name')
+            LAST_MODIFIED=$(echo "$row" | jq -r '.properties.lastModified')
+            LAST_EPOCH=$(date -u -d "$LAST_MODIFIED" +%s)
+            if [ "$LAST_EPOCH" -lt "$CUTOFF_EPOCH" ]; then
+              az storage blob delete \
+                --account-name "$STORAGE_ACCOUNT" \
+                --account-key "$ACCOUNT_KEY" \
+                --container-name "$BACKUP_CONTAINER" \
+                --name "$NAME" > /dev/null
+              DELETED=$((DELETED + 1))
+            fi
+          done < <(echo "$BLOBS" | jq -c '.[]')
+
+          echo "✓ Deleted ${DELETED} backup blobs older than ${RETENTION_DAYS} days"
 
   # ─── Post-Deployment Checks ─────────────────────────────────────
   post-deployment-checks:
     name: Post-deployment checks
     runs-on: ubuntu-latest
-    needs: [validate-config, deploy-production]
-    if: ${{ always() && (needs.deploy-production.result == 'success' || github.event.inputs.environment == 'staging') }}
+    needs: [validate-config, deploy-staging, deploy-production]
+    if: ${{ always() && ((github.event.inputs.environment == 'staging' && needs.deploy-staging.result == 'success') || (github.event.inputs.environment == 'production' && needs.deploy-production.result == 'success')) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -553,22 +842,57 @@ jobs:
         run: |
           echo "✓ Deployment completed successfully"
           echo "Environment: ${{ github.event.inputs.environment }}"
-          echo "Image: ${{ needs.validate-config.outputs.image-uri }}"
+          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
           echo "Timestamp: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 
   # ─── Final Status ───────────────────────────────────────────────
   deployment-status:
     name: Deployment status
     runs-on: ubuntu-latest
-    needs: [post-deployment-checks]
+    needs: [post-deployment-checks, rollback-production, teardown-staging, cleanup-production]
     if: always()
     steps:
       - name: Deployment result
         run: |
-          if [[ "${{ needs.post-deployment-checks.result }}" == "success" ]]; then
-            echo "✓ Deployment successful"
-            exit 0
-          else
-            echo "✗ Deployment failed"
+          ACTION="${{ github.event.inputs.action }}"
+          ENV="${{ github.event.inputs.environment }}"
+
+          if [[ "$ACTION" == "deploy" && "$ENV" == "staging" ]]; then
+            [[ "${{ needs.post-deployment-checks.result }}" == "success" ]] && echo "✓ Staging deploy successful" && exit 0
+            echo "✗ Staging deploy failed"
             exit 1
           fi
+
+          if [[ "$ACTION" == "deploy" && "$ENV" == "production" ]]; then
+            if [[ "${{ needs.post-deployment-checks.result }}" != "success" ]]; then
+              echo "✗ Production deploy failed"
+              exit 1
+            fi
+            if [[ "${{ github.event.inputs.teardown_staging_on_production }}" == "true" && "${{ needs['teardown-staging'].result }}" != "success" ]]; then
+              echo "✗ Production deploy completed but requested staging teardown failed"
+              exit 1
+            fi
+            echo "✓ Production deploy successful"
+            exit 0
+          fi
+
+          if [[ "$ACTION" == "rollback" ]]; then
+            [[ "${{ needs.rollback-production.result }}" == "success" ]] && echo "✓ Production rollback successful" && exit 0
+            echo "✗ Production rollback failed"
+            exit 1
+          fi
+
+          if [[ "$ACTION" == "destroy" ]]; then
+            [[ "${{ needs['teardown-staging'].result }}" == "success" ]] && echo "✓ Staging destroy successful" && exit 0
+            echo "✗ Staging destroy failed"
+            exit 1
+          fi
+
+          if [[ "$ACTION" == "cleanup" ]]; then
+            [[ "${{ needs.cleanup-production.result }}" == "success" ]] && echo "✓ Production cleanup successful" && exit 0
+            echo "✗ Production cleanup failed"
+            exit 1
+          fi
+
+          echo "✗ Unrecognized workflow outcome"
+          exit 1

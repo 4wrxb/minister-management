@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Search, ArrowLeft, Save, AlertCircle, CheckCircle, ExternalLink } from 'lucide-react';
+import { Search, ArrowLeft, Save, AlertCircle, CheckCircle } from 'lucide-react';
 import axios from 'axios';
 import TimezoneSelector from '../components/TimezoneSelector';
 import { getSavedTimezone, generatePlayerTimeSlots, getTimezoneAbbr, formatTimeInTimezone } from '../utils/timezone';
-import { LOOTBAR_URL } from '../utils/affiliate';
+import { getToleranceMinutes } from '../utils/slotOffset';
 
 interface PlayerData {
   id?: number;
@@ -41,6 +41,7 @@ export default function UpdateSubmission() {
   const [timezone, setTimezone] = useState(getSavedTimezone);
   const [heatmapData, setHeatmapData] = useState<Record<string, Record<string, number>>>({});
   const [playerAssignments, setPlayerAssignments] = useState<Record<string, {time_slot: string}[]> | null>(null);
+  const [timeSlotOffset, setTimeSlotOffset] = useState<number | null>(null);
 
   useEffect(() => {
     axios.get('/api/settings/show-fire-crystals')
@@ -51,6 +52,12 @@ export default function UpdateSubmission() {
       .catch(() => {});
     axios.get('/api/time-preferences/heatmap')
       .then(res => setHeatmapData(res.data))
+      .catch(() => {});
+    axios.get('/api/settings/time-slot-offset')
+      .then(res => {
+        const value = res.data?.time_slot_offset;
+        if (typeof value === 'number') setTimeSlotOffset(value);
+      })
       .catch(() => {});
   }, []);
 
@@ -246,7 +253,7 @@ export default function UpdateSubmission() {
                               {slots.map((s, i) => (
                                 <span key={i} className="px-3 py-1 bg-success/20 text-success rounded-full text-sm font-medium">
                                   {formatTimeInTimezone(s.time_slot, timezone)}
-                                  {s.time_slot === '23:50+' && <span className="text-xs opacity-60 ml-1">(+1d)</span>}
+                                  {s.time_slot.endsWith('+') && <span className="text-xs opacity-60 ml-1">(+1d)</span>}
                                   {timezone !== 'UTC' && (
                                     <span className="opacity-60 ml-1 text-xs">({s.time_slot} UTC)</span>
                                   )}
@@ -266,20 +273,6 @@ export default function UpdateSubmission() {
                 </div>
               );
             })()}
-
-            {/* LootBar Affiliate */}
-            <a
-              href={LOOTBAR_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block w-full bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-amber-500/10 border border-amber-500/30 rounded-xl p-4 hover:border-amber-500/50 transition-all group"
-            >
-              <div className="flex items-center justify-center gap-3">
-                <span className="text-xl">🔥</span>
-                <p className="text-amber-400 font-medium text-sm">{t('promo.lootbarTitle')}</p>
-                <ExternalLink className="w-3.5 h-3.5 text-amber-400 opacity-60 group-hover:opacity-100" />
-              </div>
-            </a>
 
             {/* Player Information */}
             <div>
@@ -519,11 +512,17 @@ export default function UpdateSubmission() {
                   </span>
                 )}
               </p>
-              <div className="mt-3 p-3 bg-accent/10 border border-accent/30 rounded-lg">
-                <p className="text-sm text-accent text-center">
-                  <strong>⏱ </strong>{t('form.timeToleranceNote')}
-                </p>
-              </div>
+              {(() => {
+                const minutes = getToleranceMinutes(timeSlotOffset);
+                if (minutes === null) return null;
+                return (
+                  <div className="mt-3 p-3 bg-accent/10 border border-accent/30 rounded-lg">
+                    <p className="text-sm text-accent text-center">
+                      <strong>⏱ </strong>{t('form.timeToleranceNote', { minutes })}
+                    </p>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Update Button */}

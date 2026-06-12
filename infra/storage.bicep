@@ -17,7 +17,8 @@ param tags object = {}
 @description('Unique suffix for storage account (lowercase alphanumeric, 1-11 chars)')
 param storageSuffix string = take(uniqueString(resourceGroup().id, environmentName), 8)
 
-var storageAccountName = toLower('minister${environmentName}${storageSuffix}')
+var environmentToken = environmentName == 'production' ? 'prod' : environmentName
+var storageAccountName = toLower('minister${environmentToken}${storageSuffix}')
 var fileShareName = 'minister-data'
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
