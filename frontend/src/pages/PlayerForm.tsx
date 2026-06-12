@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowRight, CheckCircle, AlertCircle, Download, Loader2, XCi
 import axios from 'axios';
 import TimezoneSelector from '../components/TimezoneSelector';
 import { getSavedTimezone, generatePlayerTimeSlots, formatTimeInTimezone, getTimezoneAbbr } from '../utils/timezone';
+import { getToleranceMinutes } from '../utils/slotOffset';
 
 interface PlayerData {
   fid: string;
@@ -36,6 +37,7 @@ export default function PlayerForm() {
   const [heatmapData, setHeatmapData] = useState<Record<string, Record<string, number>>>({});
   const [appsClosed, setAppsClosed] = useState(false);
   const [closingChecked, setClosingChecked] = useState(false);
+  const [timeSlotOffset, setTimeSlotOffset] = useState<number | null>(null);
 
   useEffect(() => {
     axios.get('/api/settings/show-fire-crystals')
@@ -53,6 +55,12 @@ export default function PlayerForm() {
         setClosingChecked(true);
       })
       .catch(() => setClosingChecked(true));
+    axios.get('/api/settings/time-slot-offset')
+      .then(res => {
+        const value = res.data?.time_slot_offset;
+        if (typeof value === 'number') setTimeSlotOffset(value);
+      })
+      .catch(() => {});
   }, []);
 
   const [playerData, setPlayerData] = useState<PlayerData>({
@@ -549,11 +557,17 @@ export default function PlayerForm() {
                   </span>
                 )}
               </p>
-              <div className="mt-3 p-3 bg-accent/10 border border-accent/30 rounded-lg">
-                <p className="text-sm text-accent text-center">
-                  <strong>⏱ </strong>{t('form.timeToleranceNote')}
-                </p>
-              </div>
+              {(() => {
+                const minutes = getToleranceMinutes(timeSlotOffset);
+                if (minutes === null) return null;
+                return (
+                  <div className="mt-3 p-3 bg-accent/10 border border-accent/30 rounded-lg">
+                    <p className="text-sm text-accent text-center">
+                      <strong>⏱ </strong>{t('form.timeToleranceNote', { minutes })}
+                    </p>
+                  </div>
+                );
+              })()}
             </div>
           );
         })()}

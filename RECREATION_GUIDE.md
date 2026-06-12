@@ -31,8 +31,10 @@ This document contains everything needed to recreate the Ministry Management Sys
 **Key Design Decisions:**
 - Player FID (game ID) is **required** — used as the unique identifier for updates
 - Time preferences are stored **per day type** (construction, research, troop) — not globally
-- Players select hourly preferences (00:00–23:00); system assigns in 30-minute slots with ±20 min tolerance
-- 49 assignment slots: `23:50, 00:20, 00:50, 01:20, ... 23:20, 23:50+` (the `23:50+` is the end-of-day slot, distinct from the pre-midnight `23:50`)
+- Players select hourly preferences (00:00–23:00); system assigns in 30-minute slots
+- The slot layout is admin-tunable via the `time_slot_offset` setting (`-20`, `-15`, `-10`, `0`; default `-10`)
+- At the default offset of `-10`: 49 assignment slots `23:50, 00:20, 00:50, 01:20, ... 23:20, 23:50+` (the `23:50+` is the end-of-day slot, distinct from the pre-midnight `23:50`) with ±20 min tolerance
+- At offset `0`: 48 cleanly aligned half-hour slots `00:00, 00:30, ..., 23:30` with no pre-day or end-of-day suffix
 - Simple password auth (not production-grade) — same permissions for admin and minister passwords
 - SQLite with `journal_mode=DELETE` (required for GCS FUSE compatibility)
 - Single gunicorn worker (required for SQLite on GCS FUSE)

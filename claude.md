@@ -106,7 +106,7 @@ Located in `backend/app.py` → `POST /api/admin/assignments/auto-assign`.
 1. Look up the configured research day (`tuesday` or `friday`) and validate the requested `day` (`monday`, research day, or `thursday`).
 2. Map the day to a `day_type` (`construction`, `research`, `troop`) and fetch each player's hourly time preferences for that day type from the `time_preferences` table.
 3. Calculate points per player for the day (see Point Calculation section above) and sort descending.
-4. Generate a **fixed list of 49 candidate 30-minute slots, anchored at end-of-day (23:50)** rather than midnight. The sequence is:
+4. Generate a list of candidate 30-minute slots whose layout is driven by the **configurable `time_slot_offset` setting** (admin-tunable: `-20`, `-15`, `-10`, `0`; default `-10`). At the default offset of `-10`, the layout is a **list of 49 slots, anchored at end-of-day (23:50)** rather than midnight:
 
    ```
    23:50, 00:20, 00:50, 01:20, ..., 22:20, 22:50, 23:20, 23:50+
@@ -114,11 +114,10 @@ Located in `backend/app.py` → `POST /api/admin/assignments/auto-assign`.
 
    - `23:50` = the pre-midnight slot (logically belongs to the previous day's tail).
    - `23:50+` = the end-of-day slot (logically the day's final slot).
-   - The two are distinct identifiers stored in the DB; the UI renders `23:50+` as `23:50 (+1d)`.
-5. **Match player hourly preferences with a ±20 minute tolerance window.** Each hour `H` selected by the player maps to three candidate slots:
-   - `(H-1):50` — starts 10 minutes before the hour
-   - `H:20` — starts 20 minutes after the hour
-   - `H:50` — starts 50 minutes after the hour (for `H=23`, this maps to `23:50+`)
+   - The two are distinct identifiers stored in the DB; the UI renders any slot ending in `+` as `(+1d)`.
+   - Non-zero offsets (`-15`, `-20`) produce the same 49-slot shape with their own boundary times (e.g. `23:45` / `23:45+` for `-15`).
+   - Offset `0` produces a clean 48-slot half-hour layout (`00:00, 00:30, …, 23:30`) with no `+`-suffixed slot.
+5. **Match player hourly preferences with a tolerance window driven by the offset.** For any non-zero offset each hour `H` selected by the player maps to three candidate slots — `(H-1):second`, `H:base`, `H:second` (where `base = ((offset % 30) + 30) % 30` and `second = base + 30`). At offset `0` each hour maps to exactly two slots (`H:00`, `H:30`).
 6. Walk players in points-descending order. For each, try their candidate slots and assign to the first empty one. Players with no matching free slot land in the unassigned list.
 7. **Sticky (locked) assignments** (`assignments.is_sticky = 1`) are loaded first and pinned to their slot before the points-based pass runs; their players are skipped in step 6.
 8. Persist by deleting existing rows for `day` and re-inserting the resulting assignments.
@@ -162,8 +161,8 @@ Located in `backend/app.py` → `POST /api/admin/assignments/auto-assign`.
 ### 2. Time-Slot Model
 - **Player preferences** are entered in **1-hour increments** (`00:00`–`23:00`).
 - Preferences are stored **per day type** (`construction`, `research`, `troop`) so a player can have different availability per ministry.
-- **Assignment slots** are **30-minute, end-of-day-anchored** — 49 fixed slots `23:50, 00:20, 00:50, ..., 23:20, 23:50+`.
-- The matcher uses a **±20 min tolerance window** — a player who picks hour `H` is eligible for `(H-1):50`, `H:20`, and `H:50`. This is surfaced to players as the "+/- 20 min tolerance" disclaimer.
+- **Assignment slots** are **30-minute, driven by the configurable `time_slot_offset` setting** (default `-10`, which produces the legacy 49 end-of-day-anchored slots `23:50, 00:20, …, 23:20, 23:50+`). Other allowed values: `-15`, `-20` (also 49 slots, shifted), `0` (48 aligned half-hour slots).
+- The matcher is **offset-driven**: for non-zero offsets (`-10`, `-15`, `-20`), each picked hour `H` maps to three candidate slots - `(H-1):second`, `H:base`, and `H:second` - where `base = ((offset % 30) + 30) % 30` and `second = base + 30`; default `-10` gives `(H-1):50`, `H:20`, `H:50` (roughly +/-20-30 minutes depending on the slot). Offset `0` maps each hour to exactly `H:00` and `H:30` with no cross-hour candidates. Examples for `H=14`: `-20` -> `13:40`, `14:10`, `14:40`; `-15` -> `13:45`, `14:15`, `14:45`; `-10` -> `13:50`, `14:20`, `14:50`; `0` -> `14:00`, `14:30`. The player-facing disclaimer should describe an offset-dependent tolerance window, not a fixed +/-20 minutes.
 
 ### 3. Multi-Language Support
 - 5 languages: English (en), Korean (ko), Chinese (zh), Turkish (tr), Arabic (ar)
