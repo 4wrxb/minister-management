@@ -52,11 +52,13 @@ param urlPrefix string = ''
 
 @description('Minimum Container App replicas')
 @minValue(1)
+@maxValue(1)
 param minReplicas int = 1
 
 @description('Maximum Container App replicas')
 @minValue(1)
-param maxReplicas int = 3
+@maxValue(1)
+param maxReplicas int = 1
 
 @description('Additional tags to apply on top of the defaults')
 param extraTags object = {}

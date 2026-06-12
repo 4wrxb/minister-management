@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, ArrowRight, CheckCircle, AlertCircle, Download, Loader2, XCircle, ExternalLink } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle, AlertCircle, Download, Loader2, XCircle } from 'lucide-react';
 import axios from 'axios';
 import TimezoneSelector from '../components/TimezoneSelector';
 import { getSavedTimezone, generatePlayerTimeSlots, formatTimeInTimezone, getTimezoneAbbr } from '../utils/timezone';
-import { LOOTBAR_URL } from '../utils/affiliate';
+import { getToleranceMinutes } from '../utils/slotOffset';
 
 interface PlayerData {
   fid: string;
@@ -37,6 +37,7 @@ export default function PlayerForm() {
   const [heatmapData, setHeatmapData] = useState<Record<string, Record<string, number>>>({});
   const [appsClosed, setAppsClosed] = useState(false);
   const [closingChecked, setClosingChecked] = useState(false);
+  const [timeSlotOffset, setTimeSlotOffset] = useState<number | null>(null);
 
   useEffect(() => {
     axios.get('/api/settings/show-fire-crystals')
@@ -54,6 +55,12 @@ export default function PlayerForm() {
         setClosingChecked(true);
       })
       .catch(() => setClosingChecked(true));
+    axios.get('/api/settings/time-slot-offset')
+      .then(res => {
+        const value = res.data?.time_slot_offset;
+        if (typeof value === 'number') setTimeSlotOffset(value);
+      })
+      .catch(() => {});
   }, []);
 
   const [playerData, setPlayerData] = useState<PlayerData>({
@@ -223,16 +230,6 @@ export default function PlayerForm() {
           <CheckCircle className="w-20 h-20 text-success mx-auto mb-6" />
           <h2 className="text-3xl font-bold text-accent mb-4">{t('form.success')}</h2>
           <p className="text-theme-dim mb-6">{t('form.submissionSuccess')}</p>
-          <a
-            href={LOOTBAR_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-amber-500/20 to-orange-500/20 border border-amber-500/40 rounded-xl hover:border-amber-500/60 transition-all group"
-          >
-            <span className="text-lg">🔥</span>
-            <span className="text-amber-400 font-medium text-sm">{t('promo.lootbarCta')}</span>
-            <ExternalLink className="w-3.5 h-3.5 text-amber-400 opacity-60 group-hover:opacity-100" />
-          </a>
         </div>
       </div>
     );
@@ -469,17 +466,6 @@ export default function PlayerForm() {
                   <strong>💡 </strong>{t('form.generalSpeedupsNote')}
                 </p>
               </div>
-              {/* LootBar contextual hint */}
-              <a
-                href={LOOTBAR_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-3 flex items-center justify-center gap-2 text-amber-400/80 hover:text-amber-400 text-xs transition-colors"
-              >
-                <span>🔥</span>
-                <span>{t('promo.lootbarSpeedups')}</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
             </div>
           </div>
         )}
@@ -571,11 +557,17 @@ export default function PlayerForm() {
                   </span>
                 )}
               </p>
-              <div className="mt-3 p-3 bg-accent/10 border border-accent/30 rounded-lg">
-                <p className="text-sm text-accent text-center">
-                  <strong>⏱ </strong>{t('form.timeToleranceNote')}
-                </p>
-              </div>
+              {(() => {
+                const minutes = getToleranceMinutes(timeSlotOffset);
+                if (minutes === null) return null;
+                return (
+                  <div className="mt-3 p-3 bg-accent/10 border border-accent/30 rounded-lg">
+                    <p className="text-sm text-accent text-center">
+                      <strong>⏱ </strong>{t('form.timeToleranceNote', { minutes })}
+                    </p>
+                  </div>
+                );
+              })()}
             </div>
           );
         })()}

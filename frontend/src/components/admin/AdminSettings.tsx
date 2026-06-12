@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Save, X, Check, ToggleLeft, ToggleRight } from 'lucide-react';
 import axios from 'axios';
+import { VALID_SLOT_OFFSETS, DEFAULT_SLOT_OFFSET, type SlotOffset } from '../../utils/timezone';
 
 export default function AdminSettings() {
   const { t } = useTranslation();
@@ -12,6 +13,8 @@ export default function AdminSettings() {
   const [saveMessage, setSaveMessage] = useState('');
   const [researchDay, setResearchDay] = useState<'tuesday' | 'friday'>('tuesday');
   const [showFireCrystals, setShowFireCrystals] = useState(false);
+  const [slotOffset, setSlotOffset] = useState<SlotOffset>(DEFAULT_SLOT_OFFSET);
+  const [slotOffsetError, setSlotOffsetError] = useState('');
 
   const token = localStorage.getItem('adminToken') || '';
 
@@ -27,6 +30,15 @@ export default function AdminSettings() {
 
     axios.get('/api/settings/show-fire-crystals')
       .then(res => setShowFireCrystals(res.data.show_fire_crystals || false))
+      .catch(() => {});
+
+    axios.get('/api/settings/time-slot-offset')
+      .then(res => {
+        const value = res.data?.time_slot_offset;
+        if (typeof value === 'number' && (VALID_SLOT_OFFSETS as readonly number[]).includes(value)) {
+          setSlotOffset(value as SlotOffset);
+        }
+      })
       .catch(() => {});
 
     axios.get('/api/settings/application-closing-time')
@@ -120,6 +132,24 @@ export default function AdminSettings() {
       showSaveMessage();
     } catch {
       // ignore
+    }
+  };
+
+  const handleChangeSlotOffset = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newValue = parseInt(e.target.value, 10) as SlotOffset;
+    const previous = slotOffset;
+    setSlotOffset(newValue);
+    setSlotOffsetError('');
+    try {
+      await axios.put('/api/admin/settings/time-slot-offset',
+        { time_slot_offset: newValue },
+        { headers: { Authorization: token } }
+      );
+      setSaveMessage(t('admin.slotOffsetUpdated'));
+      setTimeout(() => setSaveMessage(''), 3000);
+    } catch {
+      setSlotOffset(previous);
+      setSlotOffsetError(t('admin.slotOffsetError'));
     }
   };
 
@@ -229,6 +259,29 @@ export default function AdminSettings() {
             {showFireCrystals ? t('admin.enabled') : t('admin.disabled')}
           </span>
         </label>
+      </div>
+
+      {/* Time Slot Offset */}
+      <div className="bg-dark-card rounded-xl border border-theme-border p-6">
+        <h3 className="text-xl font-bold text-accent mb-2">{t('admin.slotOffset')}</h3>
+        <p className="text-theme-dim text-sm mb-4">{t('admin.slotOffsetDesc')}</p>
+        <div className="flex items-center gap-3">
+          <select
+            value={slotOffset}
+            onChange={handleChangeSlotOffset}
+            aria-label={t('admin.slotOffset')}
+            className="px-4 py-2 bg-dark-input border border-theme-border rounded-lg text-theme-text focus:ring-2 focus:ring-accent focus:border-accent"
+          >
+            {VALID_SLOT_OFFSETS.map(value => (
+              <option key={value} value={value}>
+                {value} {t('admin.minutes')}
+              </option>
+            ))}
+          </select>
+        </div>
+        {slotOffsetError && (
+          <p className="mt-2 text-sm text-danger">{slotOffsetError}</p>
+        )}
       </div>
     </div>
   );

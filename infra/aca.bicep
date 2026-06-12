@@ -27,11 +27,13 @@ param urlPrefix string = ''
 
 @description('Minimum number of Container App replicas')
 @minValue(1)
+@maxValue(1)
 param minReplicas int = 1
 
 @description('Maximum number of Container App replicas')
 @minValue(1)
-param maxReplicas int = 3
+@maxValue(1)
+param maxReplicas int = 1
 
 @description('Tags to apply to all resources')
 param tags object = {}

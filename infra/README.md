@@ -61,8 +61,8 @@ If you switch to ACR with a private image, add a `registries` block in `aca.bice
 | `containerMemory` | string | `1.0Gi` | Must be a valid ACA memory string and pair correctly with `containerCpu` |
 | `containerCpu` | string | `0.5` | vCPU (e.g. `0.25`, `0.5`, `1.0`) |
 | `urlPrefix` | string | *(empty)* | Sub-path mount (e.g. `/ministry`); empty = root |
-| `minReplicas` | int | `1` | Always-on minimum |
-| `maxReplicas` | int | `3` | Scale ceiling |
+| `minReplicas` | int | `1` | Always-on minimum (required=1 due to SQLite on SMB locking) |
+| `maxReplicas` | int | `1` | Scale ceiling (fixed=1 due to SQLite on SMB locking) |
 | `extraTags` | object | `{}` | Merged on top of `{ project, environment, managed-by }` |
 
 The two leaf modules (`storage.bicep`, `aca.bicep`) declare their own params and receive everything from `main.bicep` — there is **no shared parameter file**.
@@ -170,7 +170,11 @@ Backend `/health` stays mounted at the root even when `URL_PREFIX` is set — `b
 
 ### Scaling
 
-Currently the scale rule is **HTTP concurrency-based** (target: 50 in-flight requests per replica), not CPU-based, because ACA HTTP scaling is more appropriate for the request-pattern of a small admin app:
+**Single Replica Only** — `minReplicas: 1, maxReplicas: 1`.
+
+SQLite on Azure Files (SMB) has POSIX byte-range lock reliability issues and even with `SQLITE_VFS=unix-dotfile` and `journal_mode=DELETE`, concurrent writes from multiple replicas cause lock contention, database-locked errors, and potential corruption. The single-replica constraint ensures safe operation and is not a limitation — the app is a lightweight admin tool with no multi-second CPU-bound tasks (all I/O is synchronous DB queries) and doesn't benefit from horizontal scaling.
+
+If you later migrate to a different database (PostgreSQL, Cloud SQL, etc.), you can increase `maxReplicas` and use a concurrency-based scale rule:
 
 ```bicep
 scale: {
@@ -182,8 +186,6 @@ scale: {
   }]
 }
 ```
-
-If you find you need CPU-based scaling instead, swap the `http` block for a `custom` rule (`type: 'cpu'`).
 
 ## Validation
 

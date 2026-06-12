@@ -89,9 +89,9 @@ npm run dev
 See [DEPLOYMENT.md](DEPLOYMENT.md) for deployment options:
 
 - **Option 5: Azure Container Apps (Automated)** — **Recommended for production** 
-  - GitHub Actions workflow with staging→prod approval gates
-  - Bicep infrastructure-as-code with database backup/restore
-  - Auto-rollback on health check failure
+  - GitHub Actions manual-first workflow (`environment` selected per run) with production environment approval/protection support
+  - Bicep infrastructure-as-code with production snapshot/restore support
+  - Manual-first lifecycle: staging seed from prod, production deploy, cleanup/teardown run
   - See [DEPLOYMENT.md#option-5-azure-container-apps-automated](DEPLOYMENT.md#option-5-azure-container-apps-automated)
 - **Option 1–4:** Bare metal, Docker, Cloud Run, Azure App Service, and other platforms
 - **Option 6:** General cloud platform patterns (AWS, DigitalOcean, Fly.io, etc.)

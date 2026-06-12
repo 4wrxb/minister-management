@@ -8,11 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+### Changed
+
+### Fixed
+
+## [1.5.0] — 2026-06-12
+
+### Added
 - **Comprehensive maintenance and security workflows**:
   - **Dependabot auto-updates** (`.github/dependabot.yml`): Weekly automated PRs for npm, pip, and GitHub Actions dependencies. Semver-major updates for React, TypeScript, and Flask are ignored by Dependabot and require manual review to upgrade.
-  - **Nightly security scanning** (`.github/workflows/security-scan.yml`): CodeQL static analysis, Safety vulnerability checks, and npm audit. Runs nightly at 02:00 UTC; the workflow run fails when vulnerabilities are detected (does not block merges because it’s scheduled).
+  - **Nightly security scanning** (`.github/workflows/security-scan.yml`): CodeQL static analysis, Safety vulnerability checks, and npm audit. Runs nightly at 02:00 UTC; the workflow run fails when vulnerabilities are detected (does not block merges because it's scheduled).
   - **Daily maintenance checks** were evaluated and intentionally removed because they overlapped with Dependabot coverage or lacked a low-noise path to become a useful gating signal.
   - **Documentation guide** (`.github/MAINTENANCE.md`): Complete reference for workflow strategy, configuration, and troubleshooting.
+- `time_slot_offset` admin-configurable setting (allowed values: `-20`, `-15`, `-10`, `0`; default `-10`). Drives the 30-minute assignment slot layout: non-zero offsets produce 49 end-of-day-anchored slots, offset `0` produces 48 aligned half-hour slots.
+- Public endpoint `GET /api/settings/time-slot-offset` (returns current offset + valid choices).
+- Admin endpoint `PUT /api/admin/settings/time-slot-offset` (updates the offset; rejects invalid values with 400).
+- Auto-assign and assignment payloads now include a `slot_mapping` companion (index -> display string) so clients can resolve slot indices without re-deriving the layout.
 
 ### Changed
 - **Workflow optimization to eliminate duplication and improve feedback speed**:
@@ -23,6 +35,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New PR feedback timeline: <2 min for syntax/type checks, ~5 min for unit tests, ~25 min for full Docker integration test. Total: ~30 min.
 - Copilot/Claude guidance now requires future changes to finish the related user-facing docs, internal docs/changelog, and the best-fit unit or Playwright E2E tests before the work is considered complete.
 - `claude.md` remains the detailed project primer, while `.github/copilot-instructions.md` is the repo-level source of truth for validation and completion rules.
+- **Azure Container Apps deployment workflow (`deploy-aca.yml`) now follows a manual-first staged lifecycle**:
+  - Staging deploy seeds `minister.db` from a production snapshot before deploying.
+  - Production deploy now creates and logs a rollback backup blob, then can tear down staging to a zero-cost state (`teardown_staging_on_production=true` by default).
+  - Added explicit `rollback`, `destroy`, and `cleanup` action paths:
+    - `rollback` restores production DB from a named backup blob (`backup_blob_name`).
+    - `destroy` deletes staging resource group.
+    - `cleanup` prunes old production backup blobs (`backup_retention_days`).
+  - Deployment docs were aligned in `.github/DEPLOYMENT_WORKFLOW.md`, `DEPLOYMENT.md`, and `README.md`.
+  - Follow-up deploy workflow refinements from PR review:
+    - `build-image` and GHCR visibility checks now run only for `action=deploy`.
+    - Staging now runs a storage-only Bicep bootstrap before DB seed, so seed no longer depends on pre-existing staging storage.
+    - When production deploy requests staging teardown, teardown failure now fails the overall run.
+  - **Critical fix: First-time production deploy now works correctly**:
+    - Backup step detects if `main-deployment` exists before attempting backup; skips gracefully on first deploy.
+    - Added comprehensive troubleshooting guide in `DEPLOYMENT.md` for state progression and recovery scenarios.
+  - Removed `force_bootstrap` workflow input and guardrails; bootstrap now runs only for `action=deploy`.
+  - Staging DB seed is now automatic best-effort behavior: it warns and exits successfully when production RG, production `main-deployment`, or production `minister.db` is missing.
+  - Production deploy Bicep parameters now use valid `minReplicas`/`maxReplicas` names.
+- Fixed Azure storage account naming in Bicep so production names always satisfy the 24-character limit while preserving staging naming behavior.
+- Production cleanup now resolves storage accounts deterministically from `main-deployment` outputs (no fallback to listing storage accounts).
+- Slot-model description corrected across all docs. The default `time_slot_offset` of `-10` preserves the legacy 49-slot, end-of-day-anchored cadence (`23:50, 00:20, 00:50, ..., 23:20, 23:50+`) instead of "00:00 through 23:30"; other offsets now drive the layout. Player-facing tolerance copy updated in all five languages to describe the offset-dependent window rather than a hardcoded "+/-20 minutes".
+- `time_preferences.time_slot TEXT` column replaced by `hour_index INTEGER` (hour 0-23). The old "HH:MM" strings are migrated automatically on startup; only the hour portion is preserved (minutes were always ignored for hourly preferences).
+- `assignments.time_slot TEXT` column replaced by `slot_index INTEGER` (numerical index into the slot layout under the current offset). Existing rows are migrated automatically on startup using the offset that was active at migration time. Legacy rows whose `time_slot` does not decode under that offset are dropped with a warning.
+- Migrations are wrapped in a single transaction; the `numerical_slot_indexing_v1` marker is only persisted when the transaction commits, so a crash mid-migration is recoverable on next boot.
+- Slot read paths now skip rows whose `slot_index` is out of range for the currently configured offset (e.g. a `slot_index=48` row left over from offset `-10` after the admin switches to offset `0`) instead of returning a 500. The orphaned rows remain in storage so reverting the offset restores them.
+
+### Fixed
+- `POST /api/admin/assignments/update` now validates every incoming slot ID up front and returns 400 with the list of `invalid_slots` before deleting the day's rows, so a stale or malformed client payload can no longer wipe a day's schedule.
 
 ## [1.4.0] — 2026-06-11
 
@@ -161,7 +201,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Frontend:** React 18 + TypeScript + Vite + Tailwind, react-i18next, @dnd-kit drag-and-drop.
 - **Deployment:** multi-stage Dockerfile, `docker-compose.yml`, Google Cloud Run reference deployment with GCS FUSE.
 
-[Unreleased]: https://github.com/4wrxb/minister-management/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/4wrxb/minister-management/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/4wrxb/minister-management/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/4wrxb/minister-management/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/4wrxb/minister-management/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/4wrxb/minister-management/compare/v1.1.5...v1.2.0

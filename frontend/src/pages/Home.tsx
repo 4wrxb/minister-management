@@ -1,9 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { FileText, Edit, Shield, Calendar, HelpCircle, Clock, ExternalLink } from 'lucide-react';
+import { FileText, Edit, Shield, Calendar, HelpCircle, Clock } from 'lucide-react';
 import axios from 'axios';
-import { LOOTBAR_URL } from '../utils/affiliate';
 
 export default function Home() {
   const navigate = useNavigate();
@@ -157,23 +156,6 @@ export default function Home() {
             </div>
           </button>
         </div>
-
-        {/* LootBar Affiliate Banner */}
-        <a
-          href={LOOTBAR_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-8 block w-full bg-gradient-to-r from-amber-500/10 via-orange-500/10 to-amber-500/10 border border-amber-500/30 rounded-2xl p-5 hover:border-amber-500/50 hover:from-amber-500/15 hover:via-orange-500/15 hover:to-amber-500/15 transition-all duration-300 group"
-        >
-          <div className="flex items-center justify-center gap-3">
-            <span className="text-2xl">🔥</span>
-            <div className="text-center">
-              <p className="text-amber-400 font-bold text-sm">{t('promo.lootbarTitle')}</p>
-              <p className="text-theme-dim text-xs">{t('promo.lootbarDesc')}</p>
-            </div>
-            <ExternalLink className="w-4 h-4 text-amber-400 opacity-60 group-hover:opacity-100 transition-opacity" />
-          </div>
-        </a>
 
         <div className="mt-6 text-center">
           <button

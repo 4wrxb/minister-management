@@ -170,3 +170,104 @@ def test_manual_update_then_get(client, admin_headers):
     assignments = client.get("/api/admin/assignments/monday", headers=admin_headers).get_json()
     assert "06:20" in assignments
     assert assignments["06:20"][0]["fid"] == "m001"
+
+
+def test_manual_update_rejects_invalid_slot_without_deleting_existing_assignments(client, admin_headers):
+    """Invalid incoming slot IDs should fail before the day's rows are deleted."""
+    seed_player(client, fid="m001")
+    players = client.get("/api/admin/players", headers=admin_headers).get_json()
+    player_id = players[0]["id"]
+
+    existing_assignment = {
+        "06:20": [{"player_id": player_id, "fid": "m001", "game_name": "Player1", "is_assigned": True}]
+    }
+    resp = client.post(
+        "/api/admin/assignments/update",
+        json={"day": "monday", "assignments": existing_assignment},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200
+
+    invalid_assignment = {
+        "99:99": [{"player_id": player_id, "fid": "m001", "game_name": "Player1", "is_assigned": True}]
+    }
+    resp = client.post(
+        "/api/admin/assignments/update",
+        json={"day": "monday", "assignments": invalid_assignment},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 400
+    assert resp.get_json() == {
+        "error": "Invalid time slot(s) for current offset",
+        "invalid_slots": ["99:99"],
+        "time_slot_offset": -10,
+    }
+
+    with client.application.app_context():
+        from database import get_db
+
+        rows = get_db().execute(
+            "SELECT slot_index FROM assignments WHERE day = ?",
+            ("monday",),
+        ).fetchall()
+    assert len(rows) == 1
+
+    assignments = client.get("/api/admin/assignments/monday", headers=admin_headers).get_json()
+    assert assignments["06:20"][0]["fid"] == "m001"
+
+
+# ── Offset-aware behavioral coverage ──────────────────────────────────────────
+#
+# All tests above implicitly assume the default time_slot_offset of -10. The
+# tests below pin down the offset=0 layout (clean half-hour slots, 48 total)
+# so the configurable-offset wiring stays correct on both ends.
+
+def _set_offset_zero(client, admin_headers):
+    resp = client.put(
+        "/api/admin/settings/time-slot-offset",
+        json={"time_slot_offset": 0},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200
+
+
+def test_auto_assign_places_player_in_preferred_slot_with_offset_zero(client, admin_headers):
+    """At offset 0 a player preferring 01:00 should land in 01:00 or 01:30."""
+    _set_offset_zero(client, admin_headers)
+    seed_player(client, fid="p001", time_slots=["01:00"])
+
+    resp = client.post(
+        "/api/admin/assignments/auto-assign",
+        json={"day": "monday"},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert len(data["unassigned"]) == 0
+
+    assigned = {slot for slot, players in data["assignments"].items() if players}
+    assert assigned & {"01:00", "01:30"}, (
+        f"Player was not placed in an aligned slot near 01:00. Assigned: {assigned}"
+    )
+
+
+def test_manual_update_with_offset_zero_round_trips(client, admin_headers):
+    """A manual assignment to "06:00" round-trips through index storage at offset 0."""
+    _set_offset_zero(client, admin_headers)
+    seed_player(client, fid="m001")
+    players = client.get("/api/admin/players", headers=admin_headers).get_json()
+    player_id = players[0]["id"]
+
+    manual = {
+        "06:00": [{"player_id": player_id, "fid": "m001", "game_name": "Player1", "is_assigned": True}]
+    }
+    resp = client.post(
+        "/api/admin/assignments/update",
+        json={"day": "monday", "assignments": manual},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200
+
+    assignments = client.get("/api/admin/assignments/monday", headers=admin_headers).get_json()
+    assert "06:00" in assignments
+    assert assignments["06:00"][0]["fid"] == "m001"

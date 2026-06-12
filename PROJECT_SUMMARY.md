@@ -188,11 +188,14 @@ Note: 1 day = 1440 minutes
 `id`, `fid` (unique, required), `game_name`, `alliance` (3-char tag), `construction_speedups_days`, `research_speedups_days`, `troop_training_speedups_days`, `general_speedups_days`, `fire_crystals`, `refined_fire_crystals`, `fire_crystal_shards`, `avatar_image` (URL from WOS API), `stove_lv` (furnace level int), `stove_lv_content` (furnace icon URL), `timezone` (IANA tz string, optional — display only), `created_at`, `updated_at`
 
 ### time_preferences
-`id`, `player_id` (FK → players), `time_slot` (hourly, e.g. `14:00`), `day_type` (`construction` | `research` | `troop`)
-UNIQUE(`player_id`, `time_slot`, `day_type`)
+`id`, `player_id` (FK → players), `hour_index` (INTEGER 0-23), `day_type` (`construction` | `research` | `troop`)
+UNIQUE(`player_id`, `hour_index`, `day_type`)
 
 ### assignments
-`id`, `player_id` (FK → players), `day`, `time_slot` (30-min slot), `position`, `is_assigned`, `is_sticky` (lock flag for auto-assign), `created_at`
+`id`, `player_id` (FK → players), `day`, `slot_index` (INTEGER index into the slot layout under the current `time_slot_offset`), `position`, `is_assigned`, `is_sticky` (lock flag for auto-assign), `created_at`
+UNIQUE(`day`, `slot_index`, `position`)
+
+`hour_index` is the 0-23 preferred hour; `slot_index` decodes via `slot_ids(time_slot_offset)`, with `time_slot_offset` stored in `settings`.
 
 ### settings
 `key` (PRIMARY KEY), `value` (TEXT)
@@ -212,12 +215,12 @@ Known keys:
 ### Auto-Assignment
 1. Calculate points for all players for the selected day
 2. Sort players by points (descending — highest priority first)
-3. Generate the fixed list of **49 thirty-minute candidate slots anchored at end-of-day (23:50)**:
+3. Generate the list of **30-minute candidate slots** sized by the configurable `time_slot_offset` setting (admin-tunable: `-20`, `-15`, `-10`, `0`; default `-10`). At the default offset, this yields the legacy **49 end-of-day-anchored slots**:
    `23:50, 00:20, 00:50, 01:20, ..., 23:20, 23:50+`
    (`23:50` is the pre-midnight slot, `23:50+` is the end-of-day slot.)
+   Non-zero offsets shift those boundaries; offset `0` produces a clean 48-slot half-hour layout.
 4. Pre-fill **sticky / locked assignments** (`is_sticky = 1`) so they survive the run.
-5. Map each player's hourly preferences to candidate slots with a **±20 minute tolerance window**:
-   hour `H` → `(H-1):50`, `H:20`, `H:50` (hour 23's `:50` slot maps to `23:50+`).
+5. Map each player's hourly preferences to candidate slots with a tolerance window driven by the offset (3 candidates per hour for non-zero offsets, 2 for offset `0`).
 6. Walk players in descending point order; assign to the first empty matching slot.
 7. Track unassigned players (no empty matching slot) — they're returned to the UI and exported to a separate Excel tab.
 
