@@ -25,6 +25,12 @@ describe('localization library', () => {
     expect(formatTimeInTimezone('00:00', 'UTC')).toBe('00:00');
     expect(formatTimeInTimezone('00:00', 'Asia/Seoul')).toBe('09:00');
     expect(formatTimeInTimezone('23:50+', 'UTC')).toBe('23:50');
+    expect(
+      formatTimeInTimezone('12:00', 'America/New_York', '2024-01-15T00:00:00Z')
+    ).toBe('07:00');
+    expect(
+      formatTimeInTimezone('12:00', 'America/New_York', '2024-07-15T00:00:00Z')
+    ).toBe('08:00');
   });
 
   it('generates player and assignment slots', () => {
@@ -37,6 +43,11 @@ describe('localization library', () => {
     expect(assignmentSlots).toHaveLength(49);
     expect(assignmentSlots[0]).toBe('23:50');
     expect(assignmentSlots[assignmentSlots.length - 1]).toBe('23:50+');
+
+    const alignedSlots = generateAssignmentSlots(0);
+    expect(alignedSlots).toHaveLength(48);
+    expect(alignedSlots[0]).toBe('00:00');
+    expect(alignedSlots[alignedSlots.length - 1]).toBe('23:30');
   });
 
   it('derives timezone abbreviations', () => {

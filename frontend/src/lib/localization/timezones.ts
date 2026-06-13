@@ -88,16 +88,21 @@ export function saveTimezone(tz: string): void {
  *
  * @param utcHHMM UTC time string in HH:MM or HH:MM+ format
  * @param timezone IANA timezone ID
+ * @param referenceDateUTC Optional UTC date used to resolve DST offsets
  * @returns Formatted time string in specified timezone
  */
-export function formatTimeInTimezone(utcHHMM: string, timezone: string): string {
+export function formatTimeInTimezone(
+  utcHHMM: string,
+  timezone: string,
+  referenceDateUTC?: Date | string
+): string {
   const clean = utcHHMM.replace('+', '');
   if (timezone === 'UTC') return clean;
 
   const [h, m] = clean.split(':').map(Number);
 
-  // Use July 15 to be in summer (DST-aware for northern hemisphere)
-  const date = dayjs.utc(new Date(Date.UTC(2024, 6, 15, h, m, 0)));
+  const baseDate = referenceDateUTC ? dayjs.utc(referenceDateUTC) : dayjs.utc();
+  const date = baseDate.startOf('day').hour(h).minute(m).second(0).millisecond(0);
   const localDate = date.tz(timezone);
 
   return localDate.format('HH:mm');
@@ -161,9 +166,10 @@ export function generatePlayerTimeSlots(timezone: string): { display: string; ut
 }
 
 /**
- * Generate the 49 assignment time slots (30-minute granularity).
- * These are 30-minute slots starting at 23:50 UTC (previous day)
- * through 23:50 UTC (end of day), covering ~24.5 hours.
+ * Generate assignment slots (30-minute granularity) based on offsetMinutes.
+ * For offset 0, returns 48 slots (00:00 through 23:30).
+ * For non-zero offsets, returns 49 slots, anchored at the offset-specific
+ * pre-midnight boundary (e.g. 23:50) through the same boundary with '+'.
  */
 export function generateAssignmentSlots(offsetMinutes: number = DEFAULT_SLOT_OFFSET): string[] {
   const normalized = ((offsetMinutes % 30) + 30) % 30;
