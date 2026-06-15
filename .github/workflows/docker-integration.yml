@@ -139,7 +139,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
-          node-version: "18"
+          node-version: "20.19"
 
       - name: Install E2E dependencies
         working-directory: tests/e2e
