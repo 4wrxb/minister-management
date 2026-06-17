@@ -38,7 +38,7 @@ jobs:
 
       - name: Setup Node (for JavaScript analysis)
         if: matrix.language == 'javascript-typescript'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "18"
 
@@ -76,7 +76,7 @@ jobs:
           safety check --file backend/requirements.txt --json
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "18"
 
