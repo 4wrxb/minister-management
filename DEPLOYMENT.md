@@ -24,7 +24,7 @@ Run directly on any Linux, macOS, or Windows server without Docker.
 ### Prerequisites
 
 - Python 3.11+
-- Node.js 18+ (needed only at build time, not runtime)
+- Node.js 20.19+ (needed only at build time, not runtime)
 - A server or VM with persistent storage
 
 ### Step 1: Build the Frontend

@@ -92,7 +92,7 @@ Steps:
 3. Start container with `docker compose up -d --no-build` (reuses the already-built image)
 4. Poll `GET /health` every 3 s until healthy (60 s timeout)
 5. Run smoke checks (`/health`, SPA root/deep links, container log crash scan)
-6. Set up Node.js 18
+6. Set up Node.js 20.19
 7. `cd tests/e2e && npm install`
 8. `npx playwright install --with-deps chromium`
 9. `npx playwright test`

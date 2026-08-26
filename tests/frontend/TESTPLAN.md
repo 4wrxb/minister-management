@@ -41,7 +41,7 @@ npx vitest run src/__tests__/AdminLogin.test.tsx
 
 **File:** `.github/workflows/frontend-tests.yml`  
 **Triggers:** push or PR to `main`, manual `workflow_dispatch`  
-**Runner:** `ubuntu-latest`, Node.js 18
+**Runner:** `ubuntu-latest`, Node.js 20.19
 
 | Job | Steps | Gating? |
 |---|---|---|

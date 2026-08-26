@@ -81,7 +81,7 @@ minister_management/
 │       ├── docker-integration.yml      # Required check: smoke + E2E + lint + tests
 │       ├── backend-tests.yml
 │       └── frontend-tests.yml
-├── Dockerfile                          # Multi-stage: Node 18 → Python 3.11
+├── Dockerfile                          # Multi-stage: Node 20.19 → Python 3.11
 ├── docker-compose.yml
 ├── start.sh
 ├── .env.example
@@ -407,7 +407,7 @@ If `URL_PREFIX` is empty, `<base href="/">` is injected and the app serves at th
 
 ### Frontend won't start
 - Clear npm cache (permissions issues on Windows)
-- Node 18+ required
+- Node 20.19+ required
 - Vite proxy expects backend on `:8080`
 
 ### Database errors
