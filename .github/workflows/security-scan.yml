@@ -71,9 +71,66 @@ jobs:
           python-version: "3.11"
 
       - name: Check Python dependencies for vulnerabilities
+        id: python_audit
         run: |
-          pip install safety
-          safety check --file backend/requirements.txt --json
+          set +e
+          pip install --no-cache-dir pip-audit
+          install_status=$?
+          if [ $install_status -ne 0 ]; then
+            echo "python_audit_exit_code=$install_status" >> "$GITHUB_OUTPUT"
+            echo "python_audit_status=error" >> "$GITHUB_OUTPUT"
+            echo '{"error":"pip install pip-audit failed"}' > pip-audit-report.json
+            exit 0
+          fi
+
+          pip-audit -r backend/requirements.txt --format json --output pip-audit-report.json
+          audit_status=$?
+          if [ $audit_status -eq 0 ]; then
+            echo "python_audit_status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "python_audit_status=fail" >> "$GITHUB_OUTPUT"
+          fi
+          echo "python_audit_exit_code=$audit_status" >> "$GITHUB_OUTPUT"
+           
+          python3 <<'PYTHON'
+          import json
+          import os
+           
+          output_path = os.environ['GITHUB_OUTPUT']
+          fallback = {'critical': 0, 'high': 0, 'medium': 0, 'total': 0}
+          counts = fallback.copy()
+           
+          try:
+              with open('pip-audit-report.json', 'r') as f:
+                  report = json.load(f)
+               
+              if isinstance(report, dict) and 'vulnerabilities' in report:
+                  vulns = report['vulnerabilities']
+                  critical_count = sum(1 for v in vulns if v.get('fix_versions') or v.get('vulnerability', {}).get('severity') == 'critical')
+                  high_count = sum(1 for v in vulns if v.get('vulnerability', {}).get('severity') == 'high')
+                  medium_count = sum(1 for v in vulns if v.get('vulnerability', {}).get('severity') == 'medium')
+                  counts = {
+                      'critical': critical_count,
+                      'high': high_count,
+                      'medium': medium_count,
+                      'total': len(vulns)
+                  }
+          except (json.JSONDecodeError, KeyError, FileNotFoundError):
+              pass
+           
+          with open(output_path, 'a') as f:
+              for key in ['critical', 'high', 'medium', 'total']:
+                  f.write(f"python_vuln_{key}={counts[key]}\n")
+          PYTHON
+          exit 0
+
+      - name: Upload Python audit report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-audit-report
+          path: pip-audit-report.json
+          if-no-files-found: warn
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -81,6 +138,87 @@ jobs:
           node-version: "18"
 
       - name: Check Node dependencies for vulnerabilities
+        id: node_audit
         working-directory: frontend
         run: |
-          npm audit --audit-level=moderate
+          set +e
+          npm audit --audit-level=moderate --json > npm-audit-report.json
+          audit_status=$?
+          node <<'NODE'
+          const fs = require('fs');
+          const outputPath = process.env.GITHUB_OUTPUT;
+          try {
+            const report = JSON.parse(fs.readFileSync('npm-audit-report.json', 'utf8'));
+            const vulnerabilities = report?.metadata?.vulnerabilities;
+            if (vulnerabilities) {
+              // Only emit outputs if JSON parsing succeeded and vulnerabilities data exists
+              const critical = vulnerabilities.critical ?? 0;
+              const high = vulnerabilities.high ?? 0;
+              const moderate = vulnerabilities.moderate ?? 0;
+              const low = vulnerabilities.low ?? 0;
+              const info = vulnerabilities.info ?? 0;
+              const total = critical + high + moderate + low + info;
+              fs.appendFileSync(outputPath, `node_vuln_critical=${critical}\n`);
+              fs.appendFileSync(outputPath, `node_vuln_high=${high}\n`);
+              fs.appendFileSync(outputPath, `node_vuln_moderate=${moderate}\n`);
+              fs.appendFileSync(outputPath, `node_vuln_low=${low}\n`);
+              fs.appendFileSync(outputPath, `node_vuln_info=${info}\n`);
+              fs.appendFileSync(outputPath, `node_vuln_total=${total}\n`);
+            }
+          } catch {
+            // On parse error, do not emit any outputs; summary will show N/A
+          }
+          NODE
+          if [ $audit_status -eq 0 ]; then
+            echo "node_audit_status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "node_audit_status=fail" >> "$GITHUB_OUTPUT"
+          fi
+          echo "node_audit_exit_code=$audit_status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload Node audit report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-audit-report
+          path: frontend/npm-audit-report.json
+          if-no-files-found: warn
+
+      - name: Publish dependency audit summary
+        if: always()
+        env:
+          PYTHON_AUDIT_STATUS: ${{ steps.python_audit.outputs.python_audit_status }}
+          PYTHON_AUDIT_EXIT_CODE: ${{ steps.python_audit.outputs.python_audit_exit_code }}
+          PYTHON_VULN_TOTAL: ${{ steps.python_audit.outputs.python_vuln_total }}
+          PYTHON_VULN_MEDIUM: ${{ steps.python_audit.outputs.python_vuln_medium }}
+          PYTHON_VULN_HIGH: ${{ steps.python_audit.outputs.python_vuln_high }}
+          PYTHON_VULN_CRITICAL: ${{ steps.python_audit.outputs.python_vuln_critical }}
+          NODE_AUDIT_STATUS: ${{ steps.node_audit.outputs.node_audit_status }}
+          NODE_AUDIT_EXIT_CODE: ${{ steps.node_audit.outputs.node_audit_exit_code }}
+          NODE_VULN_TOTAL: ${{ steps.node_audit.outputs.node_vuln_total }}
+          NODE_VULN_MODERATE: ${{ steps.node_audit.outputs.node_vuln_moderate }}
+          NODE_VULN_HIGH: ${{ steps.node_audit.outputs.node_vuln_high }}
+          NODE_VULN_CRITICAL: ${{ steps.node_audit.outputs.node_vuln_critical }}
+        run: |
+          {
+            echo "## Dependency audit summary"
+            echo ""
+            echo "| Scanner | Status | Exit code | Total | Medium | High | Critical | Artifact |"
+            echo "| --- | --- | --- | --- | --- | --- | --- | --- |"
+            echo "| pip-audit | ${PYTHON_AUDIT_STATUS:-error} | ${PYTHON_AUDIT_EXIT_CODE:-N/A} | ${PYTHON_VULN_TOTAL:-N/A} | ${PYTHON_VULN_MEDIUM:-N/A} | ${PYTHON_VULN_HIGH:-N/A} | ${PYTHON_VULN_CRITICAL:-N/A} | python-audit-report |"
+            echo "| npm audit | ${NODE_AUDIT_STATUS:-error} | ${NODE_AUDIT_EXIT_CODE:-N/A} | ${NODE_VULN_TOTAL:-N/A} | ${NODE_VULN_MODERATE:-N/A} | ${NODE_VULN_HIGH:-N/A} | ${NODE_VULN_CRITICAL:-N/A} | node-audit-report |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail job if dependency vulnerabilities were found
+        if: always()
+        env:
+          PYTHON_AUDIT_EXIT_CODE: ${{ steps.python_audit.outputs.python_audit_exit_code }}
+          NODE_AUDIT_EXIT_CODE: ${{ steps.node_audit.outputs.node_audit_exit_code }}
+        run: |
+          py_code="${PYTHON_AUDIT_EXIT_CODE:-1}"
+          node_code="${NODE_AUDIT_EXIT_CODE:-1}"
+          if [ "$py_code" != "0" ] || [ "$node_code" != "0" ]; then
+            echo "Dependency audit checks failed. See uploaded artifacts for details."
+            exit 1
+          fi
