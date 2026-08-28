@@ -8,8 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `tests/backend/test_points.py` — pure-function unit tests pinning the canonical formula in `calculate_points()` against its docstring (per-day inputs, unit conversion, Tuesday/Friday equivalence, case-insensitive day names, int return type, unknown-day fallback).
 
 ### Changed
+- **Point calculation docs consolidated to a single canonical source.** The `calculate_points()` function in `backend/database.py` is now the single source of truth — its docstring carries the per-day formulas, unit convention (1 day = 1440 minutes), and exact input fields. `USER_GUIDE.md` keeps the canonical player-facing prose (now correctly noting the Tuesday-or-Friday research-day toggle), and `RECREATION_GUIDE.md` keeps the canonical technical restatement. The duplicated formulas in `README.md`, `PROJECT_SUMMARY.md`, and `claude.md` are replaced with short 2–3 sentence summaries that link back to the canonical sources. Drift fixed along the way: `PROJECT_SUMMARY.md` had used non-existent condensed field names (`construction_days`, `refined_crystals`, `crystal_shards`); `README.md`, `USER_GUIDE.md`, and `claude.md` had omitted the Tuesday-or-Friday research-day toggle.
 
 ### Fixed
 

@@ -212,3 +212,58 @@ seed_player(client, fid="p001", construction_speedups_days=30, time_slots=["06:0
 | `test_setting_closing_time_requires_auth` | PUT without token | 401 |
 | `test_state_number_default_is_empty` | `GET /api/settings/state-number` | 200 |
 | `test_admin_can_set_state_number` | PUT `"42"` | 200 `{"success": true}` |
+
+---
+
+### 6. Point Calculation (`test_points.py`)
+
+Pure-function unit tests for `calculate_points()` in `backend/database.py`.
+That function is the **single source of truth** for the per-day scoring formula;
+its docstring is the canonical reference and these tests pin every behaviour
+claimed by the docstring so any future formula change must be deliberate.
+
+These tests don't touch the Flask client or the DB — they call `calculate_points()`
+directly with hand-built player dicts.
+
+#### Monday — Construction
+
+| Test | Description | Expected |
+|---|---|---|
+| `test_monday_construction_speedup_is_one_point_per_minute` | 1 day of construction | 1440 pts |
+| `test_monday_general_speedup_is_one_point_per_minute` | 1 day of general | 1440 pts |
+| `test_monday_research_speedup_is_ignored` | Research-only player on Monday | 0 |
+| `test_monday_troop_speedup_is_ignored` | Troop-only player on Monday | 0 |
+| `test_monday_refined_fire_crystal_is_thirty_thousand_each` | 1 refined crystal | 30,000 pts |
+| `test_monday_fire_crystal_is_two_thousand_each` | 1 fire crystal | 2,000 pts |
+| `test_monday_fire_crystal_shards_are_ignored` | Shards-only player on Monday | 0 |
+| `test_monday_combines_all_relevant_inputs` | Full mixed player | Sum matches docstring formula |
+| `test_monday_fractional_days_are_supported` | 0.5 days construction | 720 pts (REAL columns) |
+
+#### Tuesday / Friday — Research
+
+| Test | Description | Expected |
+|---|---|---|
+| `test_research_day_speedup_is_one_point_per_minute[tuesday/friday]` | 1 day research | 1440 pts each |
+| `test_research_day_general_speedup_is_one_point_per_minute[tuesday/friday]` | 1 day general | 1440 pts each |
+| `test_research_day_construction_speedup_is_ignored[tuesday/friday]` | Construction-only player | 0 each |
+| `test_research_day_shard_is_one_thousand_each[tuesday/friday]` | 1 shard | 1,000 pts each |
+| `test_research_day_fire_crystals_are_ignored[tuesday/friday]` | Fire/refined crystals on research day | 0 each |
+| `test_research_day_combines_all_relevant_inputs[tuesday/friday]` | Full mixed player | Sum matches docstring formula |
+| `test_tuesday_and_friday_produce_identical_points` | Same player, both days | Equal scores (toggle picks the day, not the formula) |
+
+#### Thursday — Troop Training
+
+| Test | Description | Expected |
+|---|---|---|
+| `test_thursday_is_one_point_per_day_raw` | 7 days troop training | 7 pts (no minutes conversion) |
+| `test_thursday_ignores_every_other_field` | Loaded player with everything except troop=3 | 3 |
+| `test_thursday_truncates_fractional_days_to_int` | 2.9 days troop | 2 (`int()` truncation) |
+
+#### Edge cases
+
+| Test | Description | Expected |
+|---|---|---|
+| `test_unknown_day_returns_zero` | Wed / Sat / Sun | 0 |
+| `test_day_argument_is_case_insensitive[Monday/MONDAY/Tuesday/FRIDAY/Thursday]` | Mixed case day names | Same result as lowercase |
+| `test_all_zero_player_scores_zero_on_every_day` | All fields = 0 | 0 on every day |
+| `test_return_type_is_int_on_every_day` | Fractional inputs | Always `int` (for sort/JSON safety) |

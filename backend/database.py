@@ -401,14 +401,51 @@ def set_time_slot_offset(value):
 
 def calculate_points(player, day):
     """
-    Calculate points for a player based on the day type.
+    Calculate a player's contribution points for a given SVS ministry day.
+
+    This function is the **single source of truth** for the point calculation
+    formula. All documentation (USER_GUIDE.md, RECREATION_GUIDE.md, README.md,
+    PROJECT_SUMMARY.md, claude.md) should describe — and link back to — this
+    implementation rather than restate the formula independently.
+
+    Unit convention:
+        - Speedup fields are stored in **days** (REAL) on the ``players`` table.
+        - 1 day = 24 * 60 = **1440 minutes**.
+        - For Monday/Tuesday/Friday, speedups are converted to minutes and
+          contribute 1 point per minute. Thursday is the only day that keeps
+          the raw "days" value (1 point per day of troop training).
+
+    Formulas (by ``day``):
+
+        Monday — Construction Day
+            points = (construction_speedups_days + general_speedups_days) * 1440
+                   + refined_fire_crystals * 30000
+                   + fire_crystals       * 2000
+            Inputs: construction_speedups_days, general_speedups_days,
+                    refined_fire_crystals, fire_crystals
+
+        Tuesday or Friday — Research Day
+            (The state chooses one of these two via the ``research_day``
+            setting; the formula is identical either way.)
+            points = (research_speedups_days + general_speedups_days) * 1440
+                   + fire_crystal_shards * 1000
+            Inputs: research_speedups_days, general_speedups_days,
+                    fire_crystal_shards
+
+        Thursday — Troop Training Day
+            points = troop_training_speedups_days   # 1 point per day, raw
+            Inputs: troop_training_speedups_days
+
+        Any other ``day`` value returns 0.
 
     Args:
-        player: dict with player data
-        day: 'monday' (construction), 'tuesday'/'friday' (research), or 'thursday' (troop)
+        player: dict-like row from the ``players`` table. Must contain the
+            speedup and resource fields referenced above.
+        day: case-insensitive day name. One of ``'monday'``, ``'tuesday'``,
+            ``'friday'``, ``'thursday'``.
 
     Returns:
-        int: calculated points
+        int: the calculated points (truncated to an integer).
     """
     construction_mins = player['construction_speedups_days'] * 24 * 60
     research_mins = player['research_speedups_days'] * 24 * 60

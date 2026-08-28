@@ -40,17 +40,17 @@ A web application for managing ministry assignments during State vs State (SVS) 
 
 ## Point Calculation System
 
-### Monday - Construction
-- 1 point per minute of construction or general speedups
-- 30,000 points per refined fire crystal
-- 2,000 points per fire crystal
+Players earn points on three ministry days: **Monday** rewards construction
+speedups plus fire crystals, **Tuesday or Friday** (whichever the state runs)
+rewards research speedups plus fire crystal shards, and **Thursday** rewards
+troop training speedups. General speedups also count toward construction and
+research.
 
-### Tuesday - Research
-- 1 point per minute of research or general speedups
-- 1,000 points per fire crystal shard
-
-### Thursday - Troop Training
-- 1 point per day of troop training speedups
+For the full per-day formula and player-facing details, see
+[USER_GUIDE.md → Point Calculation System](USER_GUIDE.md#point-calculation-system).
+The canonical implementation is the `calculate_points()` function in
+[`backend/database.py`](backend/database.py) — if anything here disagrees with
+the code, the code wins.
 
 ## Quick Start
 
