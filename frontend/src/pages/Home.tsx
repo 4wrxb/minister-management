@@ -3,10 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { FileText, Edit, Shield, Calendar, HelpCircle, Clock } from 'lucide-react';
 import axios from 'axios';
+import { dateFormats, type SupportedLocale } from '../lib/localization';
 
 export default function Home() {
   const navigate = useNavigate();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language as SupportedLocale;
   const [publishedDays, setPublishedDays] = useState<string[]>([]);
   const [stateNumber, setStateNumber] = useState('2694');
   const [closingTime, setClosingTime] = useState('');
@@ -54,7 +56,7 @@ export default function Home() {
               <Clock className="w-4 h-4" />
               {isClosed
                 ? t('home.applicationsClosed')
-                : t('home.applicationsCloseAt', { time: new Date(closingTime).toLocaleString() })
+                : t('home.applicationsCloseAt', { time: dateFormats.dateTimeShort(closingTime, locale) })
               }
             </div>
           )}

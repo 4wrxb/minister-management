@@ -40,6 +40,7 @@ A full-stack web application for managing Whiteout Survival SVS (State vs State)
 - Docker multi-stage build (Node frontend + Python backend)
 - Multiple deployment options (bare metal, Docker, Cloud Run)
 - Multi-language i18n (English, Korean, Chinese, Turkish, Arabic)
+- Centralized frontend localization library for timezone display, date formatting, and locale-aware numbers
 - RTL support for Arabic
 - Responsive design
 - Dark navy/gold themed UI
@@ -62,9 +63,10 @@ A full-stack web application for managing Whiteout Survival SVS (State vs State)
 - **Language**: TypeScript
 - **Build Tool**: Vite
 - **Styling**: Tailwind CSS (dark theme with custom color tokens)
-- **Routing**: react-router-dom v6
-- **Internationalization**: react-i18next + i18next (5 languages)
-- **Drag-and-Drop**: @dnd-kit/core, @dnd-kit/sortable, @dnd-kit/utilities
+- **Routing**: React Router v6
+- **Internationalization**: react-i18next
+- **Localization helpers**: `frontend/src/lib/localization/` (`dayjs`)
+- **Drag-and-Drop**: @dnd-kit
 - **Icons**: lucide-react
 - **Class Utility**: clsx
 - **HTTP Client**: axios
@@ -101,8 +103,10 @@ minister_management/
 │   │   │       ├── PlayerManagement.tsx        # Player CRUD table
 │   │   │       ├── AssignmentManagement.tsx    # Drag-drop assignments
 │   │   │       └── AdminSettings.tsx           # Settings tab content
+│   │   ├── lib/
+│   │   │   └── localization/  # Shared timezone/date/number formatting helpers
+│   │   ├── __tests__/          # Localization unit tests
 │   │   ├── utils/
-│   │   │   ├── timezone.ts                 # 30-min slot generator + tz helpers
 │   │   │   └── affiliate.ts                # LootBar affiliate link helpers
 │   │   ├── i18n.ts            # Translations for 5 languages
 │   │   ├── App.tsx            # Main app component with routing
@@ -280,6 +284,14 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for complete instructions covering:
 - [ ] Database persistence across restarts
 - [ ] Health check endpoint
 - [ ] Mobile responsiveness
+
+## Validation Notes
+
+Localization changes are validated through lint/build checks, localization unit tests, and manual smoke tests for:
+- timezone switching
+- locale-specific date and number formatting
+- closing time display
+- Arabic RTL layout
 
 ---
 

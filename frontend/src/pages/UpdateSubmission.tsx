@@ -4,8 +4,8 @@ import { useTranslation } from 'react-i18next';
 import { Search, ArrowLeft, Save, AlertCircle, CheckCircle } from 'lucide-react';
 import axios from 'axios';
 import TimezoneSelector from '../components/TimezoneSelector';
-import { getSavedTimezone, generatePlayerTimeSlots, getTimezoneAbbr, formatTimeInTimezone } from '../utils/timezone';
 import { getToleranceMinutes } from '../utils/slotOffset';
+import { getSavedTimezone, generatePlayerTimeSlots, getTimezoneAbbr, formatTimeInTimezone } from '../lib/localization';
 
 interface PlayerData {
   id?: number;

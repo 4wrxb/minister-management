@@ -42,6 +42,10 @@ vi.mock('@/utils/slotOffset', () => ({
   getToleranceMinutes: () => 20,
 }))
 
+vi.mock('@/utils/slotOffset', () => ({
+  getToleranceMinutes: () => 20,
+}))
+
 // ── Startup API mock ───────────────────────────────────────────────────────────
 
 function setupStartupMocks() {

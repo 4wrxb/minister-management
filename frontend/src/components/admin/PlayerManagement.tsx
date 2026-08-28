@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Search, Edit2, Trash2, X, Save, AlertCircle, Download, Upload } from 'lucide-react';
 import axios from 'axios';
 import TimezoneSelector from '../TimezoneSelector';
-import { getSavedTimezone, generatePlayerTimeSlots, getTimezoneAbbr } from '../../utils/timezone';
+import { getSavedTimezone, generatePlayerTimeSlots, getTimezoneAbbr, numberFormats, type SupportedLocale } from '../../lib/localization';
 
 
 interface Player {
@@ -33,7 +33,8 @@ type SortField = 'game_name' | 'fid' | 'monday_points' | 'research_points' | 'th
 type SortDirection = 'asc' | 'desc';
 
 export default function PlayerManagement() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language as SupportedLocale;
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -339,13 +340,13 @@ export default function PlayerManagement() {
                 </td>
                 <td className="p-3 text-sm text-theme-dim">{player.fid}</td>
                 <td className="p-3 text-center font-medium text-accent">
-                  {player.monday_points.toLocaleString()}
+                  {numberFormats.integer(player.monday_points, locale)}
                 </td>
                 <td className="p-3 text-center font-medium text-success">
-                  {player.research_points.toLocaleString()}
+                  {numberFormats.integer(player.research_points, locale)}
                 </td>
                 <td className="p-3 text-center font-medium text-accent-light">
-                  {player.thursday_points.toLocaleString()}
+                  {numberFormats.integer(player.thursday_points, locale)}
                 </td>
                 <td className="p-3 text-center text-sm text-theme-dim">
                   {player.time_slots ? player.time_slots.length : 0} {t('admin.selected')}

@@ -1,37 +1,80 @@
 import { useTranslation } from 'react-i18next';
 
-const languages = [
-  { code: 'en', name: 'English', flag: '🇬🇧' },
-  { code: 'ko', name: '한국어', flag: '🇰🇷' },
-  { code: 'zh', name: '中文', flag: '🇨🇳' },
-  { code: 'tr', name: 'Türkçe', flag: '🇹🇷' },
-  { code: 'ar', name: 'العربية', flag: '🇸🇦' },
+type LanguageCode = 'en' | 'ko' | 'zh' | 'tr' | 'ar' | 'rr';
+
+interface LanguageOption {
+  code: LanguageCode;
+  isoCode: string;
+  emoji?: string;
+}
+
+const languageOptions: LanguageOption[] = [
+  { code: 'en', isoCode: 'en', emoji: '🇬🇧' },
+  { code: 'ko', isoCode: 'ko', emoji: '🇰🇷' },
+  { code: 'zh', isoCode: 'zh', emoji: '🇨🇳' },
+  { code: 'tr', isoCode: 'tr', emoji: '🇹🇷' },
+  { code: 'ar', isoCode: 'ar', emoji: '🇸🇦' },
+  { code: 'rr', isoCode: 'rr', emoji: '🦖' },
 ];
+
+const fallbackNativeNames: Record<LanguageCode, string> = {
+  en: 'English',
+  ko: '한국어',
+  zh: '中文',
+  tr: 'Türkçe',
+  ar: 'العربية',
+  rr: 'Rawr',
+};
+
+function getStandardLanguageLabel(option: LanguageOption): string {
+  const fallbackNativeName = fallbackNativeNames[option.code];
+  if (option.code === 'rr') {
+    return `${option.emoji} ${option.isoCode} - ${fallbackNativeName}`;
+  }
+
+  try {
+    const nativeName = new Intl.DisplayNames([option.code], { type: 'language' }).of(option.code) ?? fallbackNativeName;
+    const emojiPrefix = option.emoji ? `${option.emoji} ` : '';
+    return `${emojiPrefix}${option.isoCode} - ${nativeName}`;
+  } catch {
+    const emojiPrefix = option.emoji ? `${option.emoji} ` : '';
+    return `${emojiPrefix}${option.isoCode} - ${fallbackNativeName}`;
+  }
+}
+
+function normalizeLanguageCode(input: string): LanguageCode {
+  const base = input.toLowerCase().split('-')[0];
+  if (base === 'en' || base === 'ko' || base === 'zh' || base === 'tr' || base === 'ar' || base === 'rr') {
+    return base;
+  }
+  return 'en';
+}
 
 export default function LanguageSelector() {
   const { i18n } = useTranslation();
+  const selectedLanguage = normalizeLanguageCode(i18n.resolvedLanguage || i18n.language);
 
-  const handleLanguageChange = (langCode: string) => {
-    i18n.changeLanguage(langCode);
-    // Update document direction for RTL languages
+  const handleLanguageChange = (langCode: LanguageCode) => {
+    void i18n.changeLanguage(langCode);
     document.documentElement.dir = langCode === 'ar' ? 'rtl' : 'ltr';
   };
 
   return (
-    <div className="flex items-center gap-2 flex-wrap justify-end">
-      {languages.map((lang) => (
-        <button
-          key={lang.code}
-          onClick={() => handleLanguageChange(lang.code)}
-          className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-            i18n.language === lang.code
-              ? 'bg-accent text-dark-bg'
-              : 'bg-dark-card border border-theme-border text-theme-dim hover:border-accent hover:text-theme-text'
-          }`}
-        >
-          {lang.name}
-        </button>
-      ))}
+    <div className="flex items-center justify-end">
+      <label htmlFor="language-select" className="sr-only">Language</label>
+      <select
+        id="language-select"
+        value={selectedLanguage}
+        onChange={(event) => handleLanguageChange(event.target.value as LanguageCode)}
+        className="min-w-[290px] max-w-full rounded-lg border border-theme-border bg-dark-card px-3 py-2 text-sm text-theme-text focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/50"
+        aria-label="Language selector"
+      >
+        {languageOptions.map((option) => (
+          <option key={option.code} value={option.code}>
+            {getStandardLanguageLabel(option)}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
