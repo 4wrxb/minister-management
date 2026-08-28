@@ -16,15 +16,6 @@ import axios from 'axios'
 
 import AdminSettings from '@/components/admin/AdminSettings'
 
-vi.mock('axios')
-
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string) => key,
-    i18n: { language: 'en' },
-  }),
-}))
-
 function mockAllGetCalls(timeSlotOffset: number) {
   vi.mocked(axios.get).mockImplementation((url: string) => {
     if (url === '/api/settings/time-slot-offset') {

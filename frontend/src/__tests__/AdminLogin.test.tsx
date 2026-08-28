@@ -9,25 +9,9 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import axios from 'axios'
+import { mockNavigate } from '@/__tests__/helpers/mockCommon'
 
 import AdminLogin from '@/pages/AdminLogin'
-
-// ── Mocks ─────────────────────────────────────────────────────────────────────
-
-vi.mock('axios')
-
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string) => key,
-    i18n: { language: 'en' },
-  }),
-}))
-
-const mockNavigate = vi.fn()
-vi.mock('react-router-dom', async (importActual) => {
-  const actual = await importActual<typeof import('react-router-dom')>()
-  return { ...actual, useNavigate: () => mockNavigate }
-})
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -39,8 +23,8 @@ function renderLogin() {
   )
 }
 
-function getPasswordInput(): HTMLElement {
-  return document.querySelector('input[type="password"]') as HTMLElement
+function getPasswordInput(): HTMLInputElement {
+  return document.querySelector('input[type="password"]') as HTMLInputElement
 }
 
 function getSubmitButton(): HTMLElement {
