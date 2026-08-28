@@ -9,34 +9,9 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { vi, describe, it, expect, beforeEach } from 'vitest'
 import axios from 'axios'
+import '@/__tests__/helpers/mockPlayerFormTime'
 
 import PlayerForm from '@/pages/PlayerForm'
-
-// ── Mocks ─────────────────────────────────────────────────────────────────────
-
-vi.mock('axios')
-
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    t: (key: string) => key,
-    i18n: { language: 'en' },
-  }),
-}))
-
-const mockNavigate = vi.fn()
-vi.mock('react-router-dom', async (importActual) => {
-  const actual = await importActual<typeof import('react-router-dom')>()
-  return { ...actual, useNavigate: () => mockNavigate }
-})
-
-vi.mock('@/lib/localization', () => ({
-  getSavedTimezone: () => 'UTC',
-  saveTimezone: vi.fn(),
-  generatePlayerTimeSlots: () => [],
-  formatTimeInTimezone: (t: string) => t,
-  getTimezoneAbbr: () => 'UTC',
-  TIMEZONES: [],
-}), { virtual: true })
 
 vi.mock('@/utils/slotOffset', () => ({
   getToleranceMinutes: () => 20,
@@ -163,10 +138,8 @@ describe('PlayerForm — step 1 (Player Information)', () => {
     const nextBtn = screen.getByRole('button', { name: /form\.next/i })
     await userEvent.click(nextBtn)
 
-    // Step 2 should show a different heading (construction times)
     await waitFor(() => {
-      // The step-1 FID input should no longer be in the document
-      expect(getFidInput()).not.toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'form.constructionTimes' })).toBeInTheDocument()
     })
   })
 })
